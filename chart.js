@@ -27,7 +27,7 @@ const PAD = { top: 20, right: 80, bottom: 50, left: 80 };
 const REFRESH_DELAY_MS = 1500;
 
 // ─── State ──────────────────────────────────────────────────────────────────
-let state = { candles: [], fib: null, forecast: [], signal: null, price: null };
+let state = { candles: [], fib: null, forecast: [], signal: null, signals: {}, price: null };
 let canvas, ctx;
 let crosshairX = null;
 
@@ -79,7 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ─── Data Loading ────────────────────────────────────────────────────────────
 function loadData() {
   chrome.storage.local.get(
-    ['candles', 'fib', 'forecast', 'lastSignal', 'price'],
+    ['candles', 'fib', 'forecast', 'lastSignal', 'signals', 'price'],
     (data) => {
       if (!data.candles || data.candles.length === 0) {
         // Data not ready yet – retry
@@ -91,6 +91,7 @@ function loadData() {
       state.fib      = data.fib      || null;
       state.forecast = data.forecast || [];
       state.signal   = data.lastSignal || null;
+      state.signals  = data.signals  || {};
       state.price    = data.price    || null;
 
       document.getElementById('loading').style.display = 'none';
@@ -125,6 +126,7 @@ function updateSignalBar() {
 function updateSidebar() {
   updateFibTable();
   updateSignalPanel();
+  updateAllSignalsPanel();
   updateForecastPanel();
 }
 
@@ -164,6 +166,39 @@ function updateSignalPanel() {
       Time: ${new Date(sig.time).toLocaleTimeString()}
     </div>`;
 }
+
+function updateAllSignalsPanel() {
+  const el = document.getElementById('allSignals');
+  if (!el) return;
+
+  const defs = [
+    { id: 'fibonacci',  name: 'Fibonacci'      },
+    { id: 'rsi',        name: 'RSI (14)'        },
+    { id: 'macd',       name: 'MACD'            },
+    { id: 'bollinger',  name: 'Bollinger'       },
+    { id: 'stochastic', name: 'Stochastic'      },
+    { id: 'ema_cross',  name: 'EMA Cross (9/21)'},
+  ];
+
+  if (!state.signals || Object.keys(state.signals).length === 0) {
+    el.innerHTML = '<div style="color:#8b949e;font-size:11px">No signal data yet.</div>';
+    return;
+  }
+
+  el.innerHTML = defs.map(({ id, name }) => {
+    const sig      = state.signals[id];
+    const type     = sig?.type || null;
+    const strength = sig?.strength ?? 0;
+    const cls      = type === 'BUY' ? 'pill-buy' : type === 'SELL' ? 'pill-sell' : 'pill-neutral';
+    return `
+      <div class="signal-pill" title="${sig?.message || ''}">
+        <span class="signal-pill-name">${name}</span>
+        <span class="signal-pill-badge ${cls}">${type || '—'}</span>
+        <span class="signal-pill-str">${strength}%</span>
+      </div>`;
+  }).join('');
+}
+
 
 function updateForecastPanel() {
   const el = document.getElementById('forecastInfo');

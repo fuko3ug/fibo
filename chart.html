@@ -171,8 +171,23 @@
       min-width: 140px;
     }
 
-    /* Loading */
-    #loading {
+    /* Signals list */
+    .signals-list { display: flex; flex-direction: column; gap: 5px; }
+    .signal-pill {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; padding: 4px 6px;
+      border-radius: 6px; background: #0d1117;
+      border: 1px solid #21262d;
+    }
+    .signal-pill-name { flex: 1; color: #8b949e; }
+    .signal-pill-badge {
+      font-size: 10px; font-weight: 700;
+      padding: 1px 5px; border-radius: 8px; letter-spacing: .3px;
+    }
+    .pill-buy     { background: #238636; color: #fff; }
+    .pill-sell    { background: #da3633; color: #fff; }
+    .pill-neutral { background: #21262d; color: #8b949e; }
+    .signal-pill-str { font-size: 10px; color: #8b949e; min-width: 26px; text-align: right; }
       position: fixed; inset: 0;
       display: flex; align-items: center; justify-content: center;
       background: #0d1117;
@@ -244,6 +259,12 @@
         <div id="signalPanel" class="signal-panel">
           <div class="signal-detail">No active signal</div>
         </div>
+      </div>
+
+      <!-- All signals -->
+      <div>
+        <div class="panel-title">Signal Overview</div>
+        <div class="signals-list" id="allSignals"></div>
       </div>
 
       <!-- Forecast -->
