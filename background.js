@@ -44,34 +44,56 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 // ─── Data Fetching ─────────────────────────────────────────────────────────
 async function fetchGoldData() {
-  const url =
-    `https://query1.finance.yahoo.com/v8/finance/chart/${GOLD_SYMBOL}` +
-    `?interval=${INTERVAL}&range=${RANGE}&events=div%7Csplits`;
+  // Try query1 first, fall back to query2 on network/rate-limit errors
+  const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
 
-  try {
-    const res  = await fetch(url);
-    const json = await res.json();
+  for (const host of hosts) {
+    const url =
+      `https://${host}/v8/finance/chart/${GOLD_SYMBOL}` +
+      `?interval=${INTERVAL}&range=${RANGE}&events=div%7Csplits`;
 
-    const result     = json.chart.result[0];
-    const timestamps = result.timestamp;
-    const quote      = result.indicators.quote[0];
+    try {
+      const res  = await fetch(url);
 
-    const candles = timestamps
-      .map((ts, i) => ({
-        time  : ts * 1000,
-        open  : quote.open[i],
-        high  : quote.high[i],
-        low   : quote.low[i],
-        close : quote.close[i],
-        volume: quote.volume[i],
-      }))
-      .filter(c => c.open != null && c.high != null && c.low != null && c.close != null);
+      if (!res.ok) {
+        console.warn(`[FiboGold] HTTP ${res.status} from ${host}, trying next…`);
+        continue;
+      }
 
-    return candles;
-  } catch (err) {
-    console.error('[FiboGold] fetch error:', err);
-    return null;
+      const json = await res.json();
+
+      // Yahoo returns { chart: { result: null, error: { … } } } on failures
+      if (!json.chart || !json.chart.result || json.chart.result.length === 0) {
+        const errMsg = json.chart && json.chart.error
+          ? json.chart.error.description || JSON.stringify(json.chart.error)
+          : 'empty result';
+        console.warn(`[FiboGold] ${host} returned no data: ${errMsg}`);
+        continue;
+      }
+
+      const result     = json.chart.result[0];
+      const timestamps = result.timestamp;
+      const quote      = result.indicators.quote[0];
+
+      const candles = timestamps
+        .map((ts, i) => ({
+          time  : ts * 1000,
+          open  : quote.open[i],
+          high  : quote.high[i],
+          low   : quote.low[i],
+          close : quote.close[i],
+          volume: quote.volume[i],
+        }))
+        .filter(c => c.open != null && c.high != null && c.low != null && c.close != null);
+
+      return candles;
+    } catch (err) {
+      console.warn(`[FiboGold] fetch error from ${host}:`, err);
+    }
   }
+
+  console.error('[FiboGold] All hosts failed – could not fetch gold data.');
+  return null;
 }
 
 // ─── Fibonacci Analysis ───────────────────────────────────────────────────
