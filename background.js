@@ -7,7 +7,6 @@
  */
 
 // ─── Configuration ────────────────────────────────────────────────────────────
-const GOLD_SYMBOL      = 'xauusd';  // Stooq symbol for XAU/USD
 const FETCH_PERIOD_MIN = 1;      // how often to poll (minutes)
 const DEBOUNCE_MS      = 10 * 60 * 1000; // 10 minutes between tab openings
 
@@ -46,51 +45,99 @@ function fmtDate(d) {
   return d.toISOString().slice(0, 10).replace(/-/g, '');
 }
 
+/**
+ * Parse Stooq CSV text into candles.
+ * Handles both CRLF and LF, and both 7-column (Date,Time,O,H,L,C,V)
+ * and 6-column (Date,O,H,L,C,V) responses.
+ */
+function parseStooqCsv(text) {
+  // Detect HTML error/rate-limit page
+  if (text.trimStart().startsWith('<')) return null;
+
+  // Handle Windows CRLF and stray \r characters
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return null;
+
+  // Detect column indices from header (case-insensitive)
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  const idx = {
+    date  : headers.indexOf('date'),
+    time  : headers.indexOf('time'),   // -1 for daily CSVs
+    open  : headers.indexOf('open'),
+    high  : headers.indexOf('high'),
+    low   : headers.indexOf('low'),
+    close : headers.indexOf('close'),
+    volume: headers.indexOf('volume'),
+  };
+
+  if (idx.date === -1 || idx.open === -1 || idx.close === -1) return null;
+
+  const candles = lines.slice(1)
+    .map(line => {
+      const parts = line.split(',').map(p => p.trim());
+      const date  = parts[idx.date];
+      // Use Time column when present; otherwise noon UTC as placeholder
+      const time  = idx.time !== -1 ? parts[idx.time] : '12:00:00';
+      return {
+        time  : new Date(`${date}T${time}Z`).getTime(),
+        open  : parseFloat(parts[idx.open]),
+        high  : parseFloat(parts[idx.high]),
+        low   : parseFloat(parts[idx.low]),
+        close : parseFloat(parts[idx.close]),
+        volume: idx.volume !== -1 ? (parseFloat(parts[idx.volume]) || 0) : 0,
+      };
+    })
+    .filter(c => !isNaN(c.time) && !isNaN(c.open) && !isNaN(c.high) &&
+                 !isNaN(c.low)  && !isNaN(c.close));
+
+  return candles.length > 0 ? candles : null;
+}
+
 async function fetchGoldData() {
-  // Stooq free CSV API – no API key, globally accessible
-  // Hourly (i=h) candles for the last ~8 calendar days (covers weekends)
-  const now  = new Date();
-  const past = new Date(now);
-  past.setDate(past.getDate() - 8);
+  // Stooq free CSV API – no API key, globally accessible.
+  // Try hourly first (i=h); fall back to daily (i=d) if hourly is unavailable.
+  // Try both common symbol spellings for XAU/USD.
+  const now = new Date();
 
-  const url =
-    `https://stooq.com/q/d/l/?s=${GOLD_SYMBOL}&i=h` +
-    `&d1=${fmtDate(past)}&d2=${fmtDate(now)}`;
+  const attempts = [
+    { symbol: 'xauusd',  i: 'h', days: 8   },
+    { symbol: 'xau.usd', i: 'h', days: 8   },
+    { symbol: 'xauusd',  i: 'd', days: 120 },
+    { symbol: 'xau.usd', i: 'd', days: 120 },
+  ];
 
-  try {
-    const res = await fetch(url);
+  for (const { symbol, i, days } of attempts) {
+    const past = new Date(now);
+    past.setDate(past.getDate() - days);
 
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const url =
+      `https://stooq.com/q/d/l/?s=${symbol}&i=${i}` +
+      `&d1=${fmtDate(past)}&d2=${fmtDate(now)}`;
 
-    const text  = await res.text();
-    const lines = text.trim().split('\n');
+    try {
+      const res = await fetch(url);
 
-    // First line is the CSV header: Date,Time,Open,High,Low,Close,Volume
-    if (lines.length < 2) throw new Error('empty response from Stooq');
+      if (!res.ok) {
+        console.warn(`[FiboGold] Stooq HTTP ${res.status} for ${symbol} i=${i}`);
+        continue;
+      }
 
-    const candles = lines.slice(1)
-      .map(line => {
-        const [date, time, open, high, low, close, volume] = line.split(',');
-        return {
-          time  : new Date(`${date}T${time}Z`).getTime(),
-          open  : parseFloat(open),
-          high  : parseFloat(high),
-          low   : parseFloat(low),
-          close : parseFloat(close),
-          volume: parseFloat(volume) || 0,
-        };
-      })
-      .filter(c => !isNaN(c.time) && c.open != null && c.high != null &&
-                   c.low != null && c.close != null &&
-                   !isNaN(c.open) && !isNaN(c.close));
+      const text    = await res.text();
+      const candles = parseStooqCsv(text);
 
-    if (candles.length === 0) throw new Error('no valid candles in Stooq response');
+      if (candles) {
+        console.log(`[FiboGold] Stooq OK: ${candles.length} candles (${symbol}, i=${i})`);
+        return candles;
+      }
 
-    return candles;
-  } catch (err) {
-    console.error('[FiboGold] Stooq fetch error:', err);
-    return null;
+      console.warn(`[FiboGold] Stooq no data for ${symbol} i=${i}`, text.slice(0, 120));
+    } catch (err) {
+      console.warn(`[FiboGold] Stooq fetch error (${symbol}, i=${i}):`, err);
+    }
   }
+
+  console.error('[FiboGold] All Stooq attempts failed.');
+  return null;
 }
 
 // ─── Fibonacci Analysis ───────────────────────────────────────────────────
