@@ -1,15 +1,13 @@
 /**
  * background.js – Service Worker
  *
- * Fetches real-time gold (XAU/USD) data from Yahoo Finance,
+ * Fetches real-time gold (XAU/USD) data from Stooq (stooq.com),
  * calculates Fibonacci retracement levels, detects reversal signals,
  * and opens a chart tab whenever a new signal fires.
  */
 
 // ─── Configuration ────────────────────────────────────────────────────────────
-const GOLD_SYMBOL      = 'XAUUSD=X';
-const INTERVAL         = '1h';   // candle interval
-const RANGE            = '5d';   // look-back window
+const GOLD_SYMBOL      = 'xauusd';  // Stooq symbol for XAU/USD
 const FETCH_PERIOD_MIN = 1;      // how often to poll (minutes)
 const DEBOUNCE_MS      = 10 * 60 * 1000; // 10 minutes between tab openings
 
@@ -43,57 +41,56 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 // ─── Data Fetching ─────────────────────────────────────────────────────────
+/** Returns a date string in YYYYMMDD format required by the Stooq API. */
+function fmtDate(d) {
+  return d.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
 async function fetchGoldData() {
-  // Try query1 first, fall back to query2 on network/rate-limit errors
-  const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+  // Stooq free CSV API – no API key, globally accessible
+  // Hourly (i=h) candles for the last ~8 calendar days (covers weekends)
+  const now  = new Date();
+  const past = new Date(now);
+  past.setDate(past.getDate() - 8);
 
-  for (const host of hosts) {
-    const url =
-      `https://${host}/v8/finance/chart/${GOLD_SYMBOL}` +
-      `?interval=${INTERVAL}&range=${RANGE}&events=div%7Csplits`;
+  const url =
+    `https://stooq.com/q/d/l/?s=${GOLD_SYMBOL}&i=h` +
+    `&d1=${fmtDate(past)}&d2=${fmtDate(now)}`;
 
-    try {
-      const res  = await fetch(url);
+  try {
+    const res = await fetch(url);
 
-      if (!res.ok) {
-        console.warn(`[FiboGold] HTTP ${res.status} from ${host}, trying next…`);
-        continue;
-      }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      const json = await res.json();
+    const text  = await res.text();
+    const lines = text.trim().split('\n');
 
-      // Yahoo returns { chart: { result: null, error: { … } } } on failures
-      if (!json.chart || !json.chart.result || json.chart.result.length === 0) {
-        const errMsg = json.chart && json.chart.error
-          ? json.chart.error.description || JSON.stringify(json.chart.error)
-          : 'empty result';
-        console.warn(`[FiboGold] ${host} returned no data: ${errMsg}`);
-        continue;
-      }
+    // First line is the CSV header: Date,Time,Open,High,Low,Close,Volume
+    if (lines.length < 2) throw new Error('empty response from Stooq');
 
-      const result     = json.chart.result[0];
-      const timestamps = result.timestamp;
-      const quote      = result.indicators.quote[0];
+    const candles = lines.slice(1)
+      .map(line => {
+        const [date, time, open, high, low, close, volume] = line.split(',');
+        return {
+          time  : new Date(`${date}T${time}Z`).getTime(),
+          open  : parseFloat(open),
+          high  : parseFloat(high),
+          low   : parseFloat(low),
+          close : parseFloat(close),
+          volume: parseFloat(volume) || 0,
+        };
+      })
+      .filter(c => !isNaN(c.time) && c.open != null && c.high != null &&
+                   c.low != null && c.close != null &&
+                   !isNaN(c.open) && !isNaN(c.close));
 
-      const candles = timestamps
-        .map((ts, i) => ({
-          time  : ts * 1000,
-          open  : quote.open[i],
-          high  : quote.high[i],
-          low   : quote.low[i],
-          close : quote.close[i],
-          volume: quote.volume[i],
-        }))
-        .filter(c => c.open != null && c.high != null && c.low != null && c.close != null);
+    if (candles.length === 0) throw new Error('no valid candles in Stooq response');
 
-      return candles;
-    } catch (err) {
-      console.warn(`[FiboGold] fetch error from ${host}:`, err);
-    }
+    return candles;
+  } catch (err) {
+    console.error('[FiboGold] Stooq fetch error:', err);
+    return null;
   }
-
-  console.error('[FiboGold] All hosts failed – could not fetch gold data.');
-  return null;
 }
 
 // ─── Fibonacci Analysis ───────────────────────────────────────────────────
