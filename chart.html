@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gold Fibonacci Chart</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 13px;
+      min-height: 100vh;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+    }
+    .topbar-left { display: flex; align-items: center; gap: 12px; }
+    .logo { font-size: 22px; }
+    .title { font-size: 16px; font-weight: 700; color: #FFD700; }
+    .sub   { font-size: 12px; color: #8b949e; }
+    .price-pill {
+      background: #1c2a1c;
+      border: 1px solid #238636;
+      border-radius: 20px;
+      padding: 4px 14px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #FFD700;
+    }
+    .btn-refresh {
+      padding: 6px 14px;
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e6edf3;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .btn-refresh:hover { background: #2d333b; }
+
+    /* ── Signal banner ── */
+    .signal-bar {
+      display: none;
+      padding: 10px 20px;
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: .3px;
+    }
+    .signal-bar.buy  { background: #0d2a1f; border-bottom: 2px solid #238636; color: #3fb950; }
+    .signal-bar.sell { background: #2a0d0d; border-bottom: 2px solid #da3633; color: #f85149; }
+
+    /* ── Main layout ── */
+    .main {
+      display: flex;
+      height: calc(100vh - 105px);
+    }
+
+    /* ── Chart area ── */
+    .chart-wrap {
+      flex: 1;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .chart-title {
+      font-size: 12px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 8px;
+    }
+    canvas#chartCanvas {
+      flex: 1;
+      width: 100%;
+      border-radius: 8px;
+      background: #0d1117;
+      cursor: crosshair;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 220px;
+      min-width: 200px;
+      border-left: 1px solid #21262d;
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .panel-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      color: #8b949e;
+      margin-bottom: 8px;
+    }
+
+    /* Fib levels table */
+    .fib-table { width: 100%; border-collapse: collapse; }
+    .fib-table td { padding: 4px 2px; font-size: 12px; }
+    .fib-table .lbl { color: #8b949e; }
+    .fib-table .prc { text-align: right; font-weight: 600; }
+    .fib-table tr.key .lbl { color: #FFD700; }
+    .fib-table tr.key .prc { color: #FFD700; }
+    .fib-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+
+    /* Signal info */
+    .signal-panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .signal-panel.buy  { border-color: #238636; background: #0d2a1f; }
+    .signal-panel.sell { border-color: #da3633; background: #2a0d0d; }
+    .signal-type {
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .signal-panel.buy  .signal-type { color: #3fb950; }
+    .signal-panel.sell .signal-type { color: #f85149; }
+    .signal-detail { font-size: 11px; color: #8b949e; line-height: 1.6; }
+
+    /* Forecast info */
+    .forecast-info { font-size: 12px; color: #8b949e; line-height: 1.6; }
+    .forecast-target { color: #58a6ff; font-weight: 600; }
+
+    /* Legend */
+    .legend { display: flex; flex-direction: column; gap: 5px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8b949e; }
+    .legend-line {
+      width: 24px; height: 3px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+
+    /* Crosshair tooltip */
+    #tooltip {
+      position: fixed;
+      background: rgba(13,17,23,.92);
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 11px;
+      line-height: 1.6;
+      pointer-events: none;
+      display: none;
+      z-index: 999;
+      color: #e6edf3;
+      min-width: 140px;
+    }
+
+    /* Loading */
+    #loading {
+      position: fixed; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: #0d1117;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 16px;
+      color: #8b949e;
+      z-index: 100;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #21262d;
+      border-top-color: #FFD700;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <!-- Loading overlay -->
+  <div id="loading">
+    <div class="spinner"></div>
+    <div>Loading gold chart…</div>
+  </div>
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="logo">📊</div>
+      <div>
+        <div class="title">Fibonacci Gold Signal</div>
+        <div class="sub">XAU/USD – Fibonacci Analysis</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div class="price-pill" id="topPrice">–</div>
+      <button class="btn-refresh" id="btnRefresh">⟳ Refresh</button>
+    </div>
+  </div>
+
+  <!-- Signal banner -->
+  <div class="signal-bar" id="signalBar"></div>
+
+  <!-- Main content -->
+  <div class="main">
+
+    <!-- Chart -->
+    <div class="chart-wrap">
+      <div class="chart-title">Candlestick Chart + Fibonacci Retracements + Linear Forecast</div>
+      <canvas id="chartCanvas"></canvas>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+
+      <!-- Fib levels -->
+      <div>
+        <div class="panel-title">Fibonacci Levels</div>
+        <table class="fib-table" id="fibTable">
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- Signal info -->
+      <div>
+        <div class="panel-title">Last Signal</div>
+        <div id="signalPanel" class="signal-panel">
+          <div class="signal-detail">No active signal</div>
+        </div>
+      </div>
+
+      <!-- Forecast -->
+      <div>
+        <div class="panel-title">Forecast (Linear)</div>
+        <div class="forecast-info" id="forecastInfo">—</div>
+      </div>
+
+      <!-- Legend -->
+      <div>
+        <div class="panel-title">Legend</div>
+        <div class="legend" id="legend">
+          <div class="legend-item"><div class="legend-line" style="background:#26a69a"></div>Bullish candle</div>
+          <div class="legend-item"><div class="legend-line" style="background:#ef5350"></div>Bearish candle</div>
+          <div class="legend-item"><div class="legend-line" style="background:#58a6ff;height:2px;border-top:2px dashed #58a6ff;background:none"></div>Forecast</div>
+          <div class="legend-item"><div class="legend-line" style="background:#FFD700;opacity:.6"></div>50% (key)</div>
+          <div class="legend-item"><div class="legend-line" style="background:#ff9800;opacity:.7"></div>38.2% / 61.8%</div>
+          <div class="legend-item"><div class="legend-line" style="background:#8b949e;opacity:.5"></div>Other levels</div>
+          <div class="legend-item"><div class="legend-line" style="background:#f0e040;opacity:.7"></div>▲ Signal point</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Crosshair tooltip -->
+  <div id="tooltip"></div>
+
+  <script src="chart.js"></script>
+</body>
+</html>
