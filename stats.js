@@ -19,6 +19,15 @@ const SIGNAL_DEFS = [
 
 const PAGE_SIZE = 20;
 
+// Candle-duration thresholds used by inferInterval()
+const MS = {
+  _1m : 1 * 60 * 1000,
+  _5m : 5 * 60 * 1000,
+  _15m: 15 * 60 * 1000,
+  _30m: 30 * 60 * 1000,
+  _1h : 60 * 60 * 1000,
+};
+
 // ─── State ────────────────────────────────────────────────────────────────────
 let allEntries    = [];   // enriched history (with pnl fields)
 let filtered      = [];   // after filter + search
@@ -88,11 +97,11 @@ function inferInterval(entry) {
   if (entry.interval) return entry.interval;
   if (!entry.intervalMs) return '–';
   const ms = entry.intervalMs;
-  if (ms <=    60000) return '1m';
-  if (ms <=   300000) return '5m';
-  if (ms <=   900000) return '15m';
-  if (ms <=  1800000) return '30m';
-  if (ms <=  3600000) return '1h';
+  if (ms <= MS._1m)  return '1m';
+  if (ms <= MS._5m)  return '5m';
+  if (ms <= MS._15m) return '15m';
+  if (ms <= MS._30m) return '30m';
+  if (ms <= MS._1h)  return '1h';
   return '1d';
 }
 

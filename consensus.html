@@ -248,7 +248,11 @@ function pct(n) {
   return n != null ? (n >= 0 ? '+' : '') + n.toFixed(2) + '%' : '–';
 }
 
-/** Build per-indicator stats from signal history. */
+/** Build per-indicator stats from signal history.
+ *  For indicators with no resolved signals yet, winRate defaults to 0.5 (50 %).
+ *  This neutral default avoids artificially suppressing new indicators while
+ *  their track record is still being established.
+ */
 function buildStats(signalHistory) {
   const map = {};
   for (const def of SIGNAL_DEFS) {

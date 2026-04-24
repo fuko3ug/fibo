@@ -9,6 +9,10 @@
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 const KEY_RATIOS = new Set([0.382, 0.5, 0.618]);
+// Must match OUTCOME_CANDLES in background.js
+const OUTCOME_CANDLES = 5;
+// Fallback candle duration used when intervalMs is absent (1 hour in ms)
+const DEFAULT_CANDLE_MS = 3_600_000;
 
 const FIB_COLORS = {
   0     : { color: '#8b949e', alpha: 0.40 },
@@ -625,7 +629,7 @@ function drawSignalPriceLines(ctx, signalHistory, candles, xForIndex, yScale, ch
     }
 
     // Find outcome candle (first candle at or after outcomeDeadline)
-    const deadline = entry.outcomeDeadline || (entry.time + 5 * (entry.intervalMs || 3600000));
+    const deadline = entry.outcomeDeadline || (entry.time + OUTCOME_CANDLES * (entry.intervalMs || DEFAULT_CANDLE_MS));
     let exitIdx = candles.findIndex(c => c.time >= deadline);
     if (exitIdx < 0) exitIdx = candles.length - 1; // use last candle if not found
 
