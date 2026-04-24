@@ -3,13 +3,12 @@
  *
  * Reads cached data from chrome.storage.local (written by background.js)
  * and renders: gold price, collapsible signal cards (each with notify toggle
- * + min-strength threshold), and Fibonacci level grid.
+ * + min-strength threshold), Fibonacci level grid, and a timeframe selector.
  */
 
 const KEY_RATIOS = new Set([0.382, 0.5, 0.618]);
 
-// Delay (ms) to wait for background to update storage after a refresh request
-const REFRESH_DELAY_MS = 1500;
+const REFRESH_DELAY_MS = 2000;
 
 const SIGNAL_DEFS = [
   { id: 'fibonacci',  name: 'Fibonacci',        icon: '📐' },
@@ -20,7 +19,6 @@ const SIGNAL_DEFS = [
   { id: 'ema_cross',  name: 'EMA Cross (9/21)',  icon: '✂️' },
 ];
 
-// Default per-signal notification settings
 const DEFAULT_SETTINGS = {
   fibonacci  : { notify: true,  threshold: 5  },
   rsi        : { notify: true,  threshold: 10 },
@@ -30,14 +28,65 @@ const DEFAULT_SETTINGS = {
   ema_cross  : { notify: false, threshold: 5  },
 };
 
+const INTERVALS = ['1m', '5m', '15m', '30m', '1h'];
+
 function fmt(n)      { return n != null ? '$' + n.toFixed(2) : '–'; }
 function fmtTime(ms) {
   if (!ms) return '';
   return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+// ─── Interval bar ────────────────────────────────────────────────────────────
+function initIntervalBar() {
+  chrome.storage.local.get('selectedInterval', ({ selectedInterval = '1h' }) => {
+    setActiveInterval(selectedInterval);
+  });
+
+  document.querySelectorAll('.interval-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const iv = btn.dataset.interval;
+      setActiveInterval(iv);
+      // Tell background to switch interval and re-fetch
+      chrome.runtime.sendMessage({ type: 'SET_INTERVAL', interval: iv });
+      // Show loading while waiting for new data
+      document.getElementById('content').innerHTML =
+        '<div class="status-msg">⏳ Fetching data…</div>';
+      setTimeout(loadData, REFRESH_DELAY_MS);
+    });
+  });
+}
+
+function setActiveInterval(iv) {
+  document.querySelectorAll('.interval-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.interval === iv);
+  });
+}
+
 // ─── Rendering ──────────────────────────────────────────────────────────────
-function renderContent({ price, fib, signals, signalSettings, lastUpdate }) {
+function renderContent({ price, fib, signals, signalSettings, lastUpdate, fetchError }) {
+  if (fetchError && !price) {
+    document.getElementById('content').innerHTML = `
+      <div class="error-block">
+        ⚠️ Altın verisi alınamadı.<br>
+        İnternet bağlantınızı kontrol edin veya birkaç dakika bekleyin.
+        <br><br>
+        <small style="color:#8b949e">Yahoo Finance erişimi geçici olarak engellenmiş olabilir.</small>
+      </div>
+      <div class="btn-row" style="padding:12px 16px;display:flex;gap:8px;">
+        <button class="btn btn-primary" id="btnChart">Open Chart</button>
+        <button class="btn btn-secondary" id="btnRefresh">Retry</button>
+      </div>`;
+    document.getElementById('btnChart')?.addEventListener('click', () =>
+      chrome.tabs.create({ url: chrome.runtime.getURL('chart.html') }));
+    document.getElementById('btnRefresh')?.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'FETCH_NOW' });
+      document.getElementById('content').innerHTML =
+        '<div class="status-msg">⏳ Yeniden deneniyor…</div>';
+      setTimeout(loadData, REFRESH_DELAY_MS);
+    });
+    return;
+  }
+
   // Merge saved settings with defaults (per signal)
   const cfg = {};
   for (const { id } of SIGNAL_DEFS) {
@@ -152,7 +201,7 @@ function renderContent({ price, fib, signals, signalSettings, lastUpdate }) {
     chk.addEventListener('change', () => {
       const id    = chk.dataset.id;
       const input = document.querySelector(`.threshold-input[data-id="${id}"]`);
-      input.disabled = !chk.checked;
+      if (input) input.disabled = !chk.checked;
       saveSignalSetting(id, { notify: chk.checked });
     });
   });
@@ -172,9 +221,10 @@ function renderContent({ price, fib, signals, signalSettings, lastUpdate }) {
     chrome.tabs.create({ url: chrome.runtime.getURL('chart.html') });
   });
   document.getElementById('btnRefresh').addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'FETCH_NOW' }, () => {
-      setTimeout(loadData, REFRESH_DELAY_MS);
-    });
+    chrome.runtime.sendMessage({ type: 'FETCH_NOW' });
+    document.getElementById('content').innerHTML =
+      '<div class="status-msg">⏳ Yenileniyor…</div>';
+    setTimeout(loadData, REFRESH_DELAY_MS);
   });
 }
 
@@ -193,11 +243,11 @@ function saveSignalSetting(id, changes) {
 // ─── Data Loading ─────────────────────────────────────────────────────────────
 function loadData() {
   chrome.storage.local.get(
-    ['price', 'fib', 'signals', 'signalSettings', 'lastUpdate'],
+    ['price', 'fib', 'signals', 'signalSettings', 'lastUpdate', 'fetchError'],
     (data) => {
-      if (!data.price) {
+      if (!data.price && !data.fetchError) {
         document.getElementById('content').innerHTML =
-          '<div class="status-msg">⏳ Fetching gold data… please wait a moment.</div>';
+          '<div class="status-msg">⏳ Altın verisi yükleniyor… lütfen bekleyin.</div>';
         return;
       }
       renderContent(data);
@@ -207,7 +257,15 @@ function loadData() {
 
 // Listen for storage changes (background updates while popup is open)
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.price || changes.signals)) loadData();
+  if (area === 'local' && (changes.price || changes.signals || changes.fetchError)) {
+    // Keep interval bar in sync if interval was changed from elsewhere
+    if (changes.selectedInterval) {
+      setActiveInterval(changes.selectedInterval.newValue || '1h');
+    }
+    loadData();
+  }
 });
 
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+initIntervalBar();
 loadData();

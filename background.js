@@ -7,8 +7,18 @@
  */
 
 // ─── Configuration ────────────────────────────────────────────────────────────
-const FETCH_PERIOD_MIN = 1;      // how often to poll (minutes)
-const DEBOUNCE_MS      = 10 * 60 * 1000; // 10 minutes between tab openings
+const FETCH_PERIOD_MIN = 1;      // default poll (minutes) – overridden by interval
+const DEBOUNCE_MS      = 10 * 60 * 1000; // 10 minutes between notifications
+
+// Interval configs – keyed by user-visible label
+const INTERVAL_CONFIGS = {
+  '1m':  { interval: '1m',  range: '1d',   pollMin: 1  },
+  '5m':  { interval: '5m',  range: '5d',   pollMin: 5  },
+  '15m': { interval: '15m', range: '5d',   pollMin: 15 },
+  '30m': { interval: '30m', range: '30d',  pollMin: 30 },
+  '1h':  { interval: '1h',  range: '60d',  pollMin: 60 },
+};
+const DEFAULT_INTERVAL = '1h';
 
 // Fibonacci ratios used in calculations
 const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
@@ -26,12 +36,17 @@ const SWING_LOOKBACK = 50;
 const FORECAST_PERIODS = 12;
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create('fetchGoldData', { periodInMinutes: FETCH_PERIOD_MIN });
+chrome.runtime.onInstalled.addListener(async () => {
+  const { selectedInterval = DEFAULT_INTERVAL } =
+    await chrome.storage.local.get('selectedInterval');
+  await updateAlarm(selectedInterval);
   fetchAndAnalyze();
 });
 
-chrome.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(async () => {
+  const { selectedInterval = DEFAULT_INTERVAL } =
+    await chrome.storage.local.get('selectedInterval');
+  await updateAlarm(selectedInterval);
   fetchAndAnalyze();
 });
 
@@ -39,29 +54,51 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'fetchGoldData') fetchAndAnalyze();
 });
 
+/** Recreate the alarm with the period matching the selected interval. */
+async function updateAlarm(intervalKey) {
+  const cfg = INTERVAL_CONFIGS[intervalKey] || INTERVAL_CONFIGS[DEFAULT_INTERVAL];
+  await chrome.alarms.clear('fetchGoldData');
+  chrome.alarms.create('fetchGoldData', { periodInMinutes: cfg.pollMin });
+}
+
 // ─── Data Fetching ─────────────────────────────────────────────────────────
 
 async function fetchGoldData() {
-  // Yahoo Finance chart API – no API key required.
-  // Try hourly (1h / 5-day range) first; fall back to daily (1d / 6-month range).
-  // Try both the spot symbol and the futures symbol for XAU/USD.
-  const attempts = [
-    { symbol: 'XAUUSD=X', interval: '1h',  range: '5d'  },
-    { symbol: 'GC=F',     interval: '1h',  range: '5d'  },
-    { symbol: 'XAUUSD=X', interval: '1d',  range: '6mo' },
-    { symbol: 'GC=F',     interval: '1d',  range: '6mo' },
-  ];
+  const { selectedInterval = DEFAULT_INTERVAL } =
+    await chrome.storage.local.get('selectedInterval');
+  const cfg = INTERVAL_CONFIGS[selectedInterval] || INTERVAL_CONFIGS[DEFAULT_INTERVAL];
 
-  for (const { symbol, interval, range } of attempts) {
+  // Yahoo Finance chart API – try query1 then query2, spot then futures.
+  // Also fall back to daily (1d) in case the short interval returns no data.
+  const hosts   = ['query1', 'query2'];
+  const symbols = ['XAUUSD=X', 'GC=F'];
+  const attempts = [];
+  for (const host of hosts) {
+    for (const symbol of symbols) {
+      attempts.push({ host, symbol, interval: cfg.interval, range: cfg.range });
+    }
+  }
+  // Always add a daily fallback so we have something to analyse
+  if (cfg.interval !== '1d') {
+    for (const host of hosts) {
+      for (const symbol of symbols) {
+        attempts.push({ host, symbol, interval: '1d', range: '6mo' });
+      }
+    }
+  }
+
+  for (const { host, symbol, interval, range } of attempts) {
     const url =
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
+      `https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}` +
       `?interval=${interval}&range=${range}`;
 
     try {
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const res = await fetch(url, {
+        headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0' },
+      });
 
       if (!res.ok) {
-        console.warn(`[FiboGold] Yahoo HTTP ${res.status} for ${symbol} ${interval}`);
+        console.warn(`[FiboGold] ${host} HTTP ${res.status} for ${symbol} ${interval}`);
         continue;
       }
 
@@ -69,7 +106,7 @@ async function fetchGoldData() {
       const result = json?.chart?.result?.[0];
 
       if (!result) {
-        console.warn(`[FiboGold] Yahoo no result for ${symbol} ${interval}`);
+        console.warn(`[FiboGold] ${host} no result for ${symbol} ${interval}`);
         continue;
       }
 
@@ -77,7 +114,7 @@ async function fetchGoldData() {
       const quote      = result.indicators?.quote?.[0];
 
       if (!timestamps || !quote) {
-        console.warn(`[FiboGold] Yahoo missing quote data for ${symbol} ${interval}`);
+        console.warn(`[FiboGold] ${host} missing quote data for ${symbol} ${interval}`);
         continue;
       }
 
@@ -95,14 +132,14 @@ async function fetchGoldData() {
                      !isNaN(c.open)  && !isNaN(c.close));
 
       if (candles.length === 0) {
-        console.warn(`[FiboGold] Yahoo no valid candles for ${symbol} ${interval}`);
+        console.warn(`[FiboGold] ${host} no valid candles for ${symbol} ${interval}`);
         continue;
       }
 
-      console.log(`[FiboGold] Yahoo OK: ${candles.length} candles (${symbol}, ${interval})`);
-      return candles;
+      console.log(`[FiboGold] OK: ${candles.length} candles (${host}, ${symbol}, ${interval})`);
+      return { candles, intervalUsed: interval };
     } catch (err) {
-      console.warn(`[FiboGold] Yahoo fetch error (${symbol}, ${interval}):`, err);
+      console.warn(`[FiboGold] fetch error (${host}, ${symbol}, ${interval}):`, err);
     }
   }
 
@@ -432,15 +469,32 @@ const SIGNAL_DEFS = [
   { id: 'ema_cross',  name: 'EMA Cross'      },
 ];
 
-// ─── Message Handler (e.g. Refresh button in popup/chart) ────────────────────
+// ─── Message Handler ─────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg && msg.type === 'FETCH_NOW') fetchAndAnalyze();
+  if (msg?.type === 'FETCH_NOW') {
+    fetchAndAnalyze();
+  }
+  if (msg?.type === 'SET_INTERVAL') {
+    const key = msg.interval && INTERVAL_CONFIGS[msg.interval]
+      ? msg.interval : DEFAULT_INTERVAL;
+    chrome.storage.local.set({ selectedInterval: key }, async () => {
+      await updateAlarm(key);
+      fetchAndAnalyze();
+    });
+  }
 });
 
 // ─── Main Loop ────────────────────────────────────────────────────────────
 async function fetchAndAnalyze() {
-  const candles = await fetchGoldData();
-  if (!candles || candles.length === 0) return;
+  const result = await fetchGoldData();
+  if (!result) {
+    // Record fetch failure so popup can show an error state
+    await chrome.storage.local.set({ fetchError: true, lastUpdate: Date.now() });
+    return;
+  }
+  await chrome.storage.local.set({ fetchError: false });
+
+  const { candles } = result;
 
   const fib      = calcFibonacci(candles);
   const signals  = computeAllSignals(candles);
