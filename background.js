@@ -10,13 +10,19 @@
 const FETCH_PERIOD_MIN = 1;      // default poll (minutes) – overridden by interval
 const DEBOUNCE_MS      = 10 * 60 * 1000; // 10 minutes between notifications
 
+// How many historical signals to keep
+const MAX_SIGNAL_HISTORY = 50;
+// Evaluate signal outcome after this many candles
+const OUTCOME_CANDLES = 5;
+
 // Interval configs – keyed by user-visible label
 const INTERVAL_CONFIGS = {
-  '1m':  { interval: '1m',  range: '1d',   pollMin: 1  },
-  '5m':  { interval: '5m',  range: '5d',   pollMin: 5  },
-  '15m': { interval: '15m', range: '5d',   pollMin: 15 },
-  '30m': { interval: '30m', range: '30d',  pollMin: 30 },
-  '1h':  { interval: '1h',  range: '60d',  pollMin: 60 },
+  '1m':  { interval: '1m',  range: '1d',   pollMin: 1   },
+  '5m':  { interval: '5m',  range: '5d',   pollMin: 5   },
+  '15m': { interval: '15m', range: '5d',   pollMin: 15  },
+  '30m': { interval: '30m', range: '30d',  pollMin: 30  },
+  '1h':  { interval: '1h',  range: '60d',  pollMin: 60  },
+  '1d':  { interval: '1d',  range: '1y',   pollMin: 120 },
 };
 const DEFAULT_INTERVAL = '1h';
 
@@ -484,6 +490,67 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
+// ─── Signal History ───────────────────────────────────────────────────────────
+
+/**
+ * Maintains a rolling history of signals with win/loss outcome evaluation.
+ * A signal is "won" if price moved in the predicted direction after OUTCOME_CANDLES.
+ */
+async function updateSignalHistory(candles, signals, price) {
+  const { signalHistory = [], selectedInterval = DEFAULT_INTERVAL } =
+    await chrome.storage.local.get(['signalHistory', 'selectedInterval']);
+
+  const cfg        = INTERVAL_CONFIGS[selectedInterval] || INTERVAL_CONFIGS[DEFAULT_INTERVAL];
+  const intervalMs = cfg.pollMin * 60 * 1000;
+
+  let history = [...signalHistory];
+
+  // Evaluate outcomes for pending signals
+  for (const entry of history) {
+    if (entry.outcome !== 'pending') continue;
+    const evalTime = entry.time + OUTCOME_CANDLES * intervalMs;
+    if (Date.now() < evalTime) continue;
+
+    const evalCandle = candles.find(c => c.time >= evalTime);
+    if (!evalCandle) continue;
+
+    entry.outcome = entry.type === 'BUY'
+      ? (evalCandle.close > entry.price ? 'win' : 'loss')
+      : (evalCandle.close < entry.price ? 'win' : 'loss');
+    entry.outcomePrice = evalCandle.close;
+  }
+
+  // Track last recorded signal time per indicator to avoid duplicates
+  const lastTimes = {};
+  for (const entry of history) {
+    if (!lastTimes[entry.indicatorId] || entry.time > lastTimes[entry.indicatorId]) {
+      lastTimes[entry.indicatorId] = entry.time;
+    }
+  }
+
+  // Append new signals that haven't been recorded yet
+  for (const { id, name } of SIGNAL_DEFS) {
+    const sig = signals[id];
+    if (!sig?.type) continue;
+    if (sig.time <= (lastTimes[id] || 0)) continue;
+
+    history.push({
+      indicatorId  : id,
+      indicatorName: name,
+      type         : sig.type,
+      price,
+      time         : sig.time,
+      strength     : sig.strength || 0,
+      message      : sig.message,
+      outcome      : 'pending',
+    });
+  }
+
+  // Sort newest first and enforce size limit
+  history.sort((a, b) => b.time - a.time);
+  return history.slice(0, MAX_SIGNAL_HISTORY);
+}
+
 // ─── Main Loop ────────────────────────────────────────────────────────────
 async function fetchAndAnalyze() {
   const result = await fetchGoldData();
@@ -502,14 +569,23 @@ async function fetchAndAnalyze() {
   const price    = candles[candles.length - 1].close;
   const fibSig   = signals.fibonacci;
 
+  // Price change vs previous candle
+  const prevPrice      = candles.length >= 2 ? candles[candles.length - 2].close : null;
+  const priceChangePct = prevPrice ? ((price - prevPrice) / prevPrice * 100) : 0;
+
+  // Update persistent signal history with outcome evaluation
+  const signalHistory = await updateSignalHistory(candles, signals, price);
+
   // Persist data so popup and chart page can read it
   await chrome.storage.local.set({
-    candles   : candles.slice(-120),
+    candles       : candles.slice(-120),
     fib,
     signals,
     forecast,
     price,
-    lastUpdate: Date.now(),
+    priceChangePct,
+    signalHistory,
+    lastUpdate    : Date.now(),
     // Keep lastSignal (Fibonacci) for chart.js backward-compat
     lastSignal: fibSig?.type
       ? { type: fibSig.type, price: fibSig.value, fibRatio: fibSig.fibRatio,

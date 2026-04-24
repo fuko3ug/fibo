@@ -254,6 +254,95 @@
       font-size: 12px;
       line-height: 1.5;
     }
+
+    /* ── Live dot ── */
+    .live-dot {
+      width: 8px; height: 8px;
+      background: #3fb950;
+      border-radius: 50%;
+      flex-shrink: 0;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(63,185,80,.5); }
+      50%       { opacity: .6; transform: scale(.75); box-shadow: 0 0 0 4px rgba(63,185,80,0); }
+    }
+
+    /* ── Stats bar ── */
+    .stats-bar {
+      display: flex;
+      align-items: center;
+      padding: 7px 10px;
+      background: #161b22;
+      border-bottom: 1px solid #21262d;
+    }
+    .stat-item { flex: 1; text-align: center; }
+    .stat-value {
+      font-size: 14px; font-weight: 700; line-height: 1.2;
+    }
+    .stat-label {
+      font-size: 9px; text-transform: uppercase; letter-spacing: .4px;
+      color: #8b949e; margin-top: 1px;
+    }
+    .stat-divider { width: 1px; height: 28px; background: #30363d; flex-shrink: 0; }
+
+    /* ── Price change ── */
+    .price-change {
+      font-size: 12px; font-weight: 600; margin-top: 2px;
+    }
+    .price-change.up   { color: #3fb950; }
+    .price-change.down { color: #f85149; }
+    .price-change.flat { color: #8b949e; }
+
+    /* ── Market session badge ── */
+    .session-badge {
+      display: inline-block;
+      padding: 2px 7px; border-radius: 10px;
+      font-size: 10px; font-weight: 600;
+      margin-top: 4px;
+    }
+
+    /* ── Signal history ── */
+    .history-list {
+      padding: 2px 8px 6px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .history-item {
+      display: flex; align-items: center; gap: 7px;
+      padding: 5px 4px;
+      border-bottom: 1px solid #21262d;
+    }
+    .history-item:last-child { border-bottom: none; }
+    .history-outcome {
+      width: 20px; height: 20px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; flex-shrink: 0;
+    }
+    .outcome-win     { background: rgba(63,185,80,.2);    color: #3fb950; }
+    .outcome-loss    { background: rgba(248,81,73,.2);    color: #f85149; }
+    .outcome-pending { background: rgba(139,148,158,.15); color: #8b949e; }
+    .history-info  { flex: 1; min-width: 0; }
+    .history-name  {
+      font-size: 11px; font-weight: 600; color: #e6edf3;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .history-time  { font-size: 10px; color: #8b949e; }
+    .history-right {
+      display: flex; flex-direction: column; align-items: flex-end;
+      gap: 2px; flex-shrink: 0;
+    }
+    .history-price    { font-size: 10px; color: #8b949e; }
+    .history-strength { font-size: 10px; color: #58a6ff; }
+
+    /* ── Summary signal consensus ── */
+    .consensus-row {
+      display: flex; gap: 3px; padding: 8px 16px 4px; align-items: center;
+    }
+    .consensus-label { font-size: 11px; color: #8b949e; flex-shrink: 0; margin-right: 4px; }
+    .consensus-bar   { flex: 1; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+    .consensus-fill  { height: 100%; border-radius: 3px; transition: width .3s; }
+    .consensus-pct   { font-size: 11px; font-weight: 600; min-width: 30px; text-align: right; }
   </style>
 </head>
 <body>
@@ -261,10 +350,11 @@
   <!-- Header -->
   <div class="header">
     <div class="header-icon">📊</div>
-    <div>
+    <div style="flex:1">
       <div class="header-title">Fibonacci Gold Signal</div>
       <div class="header-sub">XAU/USD • Real-time analysis</div>
     </div>
+    <div class="live-dot" title="Live"></div>
   </div>
 
   <!-- Timeframe selector -->
@@ -274,6 +364,7 @@
     <button class="interval-btn" data-interval="15m">15m</button>
     <button class="interval-btn" data-interval="30m">30m</button>
     <button class="interval-btn active" data-interval="1h">1h</button>
+    <button class="interval-btn" data-interval="1d">1d</button>
   </div>
 
   <!-- Content -->

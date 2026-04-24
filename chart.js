@@ -27,7 +27,7 @@ const PAD = { top: 20, right: 80, bottom: 50, left: 80 };
 const REFRESH_DELAY_MS = 1500;
 
 // ─── State ──────────────────────────────────────────────────────────────────
-let state = { candles: [], fib: null, forecast: [], signal: null, signals: {}, price: null };
+let state = { candles: [], fib: null, forecast: [], signal: null, signals: {}, price: null, signalHistory: [] };
 let canvas, ctx;
 let crosshairX = null;
 
@@ -79,7 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ─── Data Loading ────────────────────────────────────────────────────────────
 function loadData() {
   chrome.storage.local.get(
-    ['candles', 'fib', 'forecast', 'lastSignal', 'signals', 'price'],
+    ['candles', 'fib', 'forecast', 'lastSignal', 'signals', 'price', 'signalHistory'],
     (data) => {
       if (!data.candles || data.candles.length === 0) {
         // Data not ready yet – retry
@@ -87,12 +87,13 @@ function loadData() {
         return;
       }
 
-      state.candles  = data.candles  || [];
-      state.fib      = data.fib      || null;
-      state.forecast = data.forecast || [];
-      state.signal   = data.lastSignal || null;
-      state.signals  = data.signals  || {};
-      state.price    = data.price    || null;
+      state.candles       = data.candles       || [];
+      state.fib           = data.fib           || null;
+      state.forecast      = data.forecast      || [];
+      state.signal        = data.lastSignal    || null;
+      state.signals       = data.signals       || {};
+      state.price         = data.price         || null;
+      state.signalHistory = data.signalHistory || [];
 
       document.getElementById('loading').style.display = 'none';
 
@@ -128,6 +129,7 @@ function updateSidebar() {
   updateSignalPanel();
   updateAllSignalsPanel();
   updateForecastPanel();
+  updateHistoryPanel();
 }
 
 function updateFibTable() {
@@ -218,6 +220,40 @@ function updateForecastPanel() {
     Change: <span style="color:${color}">${last > first ? '+' : ''}${(last - first).toFixed(2)}</span>`;
 }
 
+function updateHistoryPanel() {
+  const el = document.getElementById('histList');
+  if (!el) return;
+
+  const history = state.signalHistory;
+  if (!history || history.length === 0) {
+    el.innerHTML = '<div style="color:#8b949e;font-size:11px">No history yet.</div>';
+    return;
+  }
+
+  const ICONS = {
+    fibonacci: '📐', rsi: '📊', macd: '📈',
+    bollinger: '🎯', stochastic: '⚡', ema_cross: '✂️',
+  };
+
+  el.innerHTML = history.slice(0, 15).map(entry => {
+    const outcomeIcon = entry.outcome === 'win'  ? '✓' :
+                        entry.outcome === 'loss' ? '✗' : '⏳';
+    const outcomeCls  = entry.outcome === 'win'  ? 'ho-win'  :
+                        entry.outcome === 'loss' ? 'ho-loss' : 'ho-pending';
+    const typeCls     = entry.type === 'BUY' ? 'pill-buy' : 'pill-sell';
+    const icon        = ICONS[entry.indicatorId] || '📊';
+    const time        = new Date(entry.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    return `
+      <div class="hist-item">
+        <div class="hist-outcome ${outcomeCls}">${outcomeIcon}</div>
+        <span class="hist-name">${icon} ${entry.indicatorName}</span>
+        <span class="hist-badge ${typeCls}">${entry.type}</span>
+        <span style="font-size:9px;color:#8b949e;flex-shrink:0">${time}</span>
+      </div>`;
+  }).join('');
+}
+
 // ─── Canvas Rendering ─────────────────────────────────────────────────────────
 function render() {
   if (!canvas || !ctx) return;
@@ -283,6 +319,11 @@ function render() {
 
   // Draw candles
   drawCandles(ctx, allCandles, xForIndex, yScale, barWidth);
+
+  // Draw historical signal outcome markers (✓ / ✗)
+  if (state.signalHistory && state.signalHistory.length > 0) {
+    drawHistoricalSignals(ctx, state.signalHistory, allCandles, xForIndex, yScale);
+  }
 
   // Draw signal marker
   if (state.signal) {
@@ -502,6 +543,57 @@ function drawSignalMarker(ctx, idx, candle, signal, xForIndex, yScale, barW) {
   ctx.fillText(signal.type, x, isBuy ? y + size + 12 : y - size - 4);
 
   ctx.restore();
+}
+
+/**
+ * Draws ✓ (win) or ✗ (loss) markers for each resolved historical signal.
+ * Pending signals are skipped – they show no marker until evaluated.
+ */
+function drawHistoricalSignals(ctx, signalHistory, candles, xForIndex, yScale) {
+  if (!signalHistory || signalHistory.length === 0) return;
+
+  // Build a quick time→index lookup for the candle array
+  const timeToIdx = new Map();
+  for (let i = 0; i < candles.length; i++) {
+    timeToIdx.set(candles[i].time, i);
+  }
+
+  for (const entry of signalHistory) {
+    if (entry.outcome === 'pending') continue;
+
+    // Find the first candle at or after the signal time
+    let idx = -1;
+    for (let i = 0; i < candles.length; i++) {
+      if (candles[i].time >= entry.time) { idx = i; break; }
+    }
+    if (idx < 0 || idx >= candles.length) continue;
+
+    const c     = candles[idx];
+    const isBuy = entry.type === 'BUY';
+    const isWin = entry.outcome === 'win';
+    const x     = xForIndex(idx);
+    const baseY = yScale(isBuy ? c.low : c.high);
+    const y     = baseY + (isBuy ? 22 : -22);
+
+    ctx.save();
+
+    // Subtle circle background
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle   = isWin ? 'rgba(63,185,80,0.2)' : 'rgba(248,81,73,0.2)';
+    ctx.beginPath();
+    ctx.arc(x, y, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Draw ✓ or ✗
+    ctx.globalAlpha    = 1;
+    ctx.fillStyle      = isWin ? '#3fb950' : '#f85149';
+    ctx.font           = 'bold 10px Segoe UI, sans-serif';
+    ctx.textAlign      = 'center';
+    ctx.textBaseline   = 'middle';
+    ctx.fillText(isWin ? '✓' : '✗', x, y);
+
+    ctx.restore();
+  }
 }
 
 function drawCrosshair(ctx, mouseX, cT, cB, candles, xForIndex, cL, chartW, totalBars, yScale) {

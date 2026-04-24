@@ -28,12 +28,27 @@ const DEFAULT_SETTINGS = {
   ema_cross  : { notify: false, threshold: 5  },
 };
 
-const INTERVALS = ['1m', '5m', '15m', '30m', '1h'];
+const INTERVALS = ['1m', '5m', '15m', '30m', '1h', '1d'];
+
+// Icon map for history entries
+const INDICATOR_ICONS = {
+  fibonacci: '📐', rsi: '📊', macd: '📈',
+  bollinger: '🎯', stochastic: '⚡', ema_cross: '✂️',
+};
 
 function fmt(n)      { return n != null ? '$' + n.toFixed(2) : '–'; }
 function fmtTime(ms) {
   if (!ms) return '';
   return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Returns the current market session based on UTC hour. */
+function getMarketSession() {
+  const h = new Date().getUTCHours();
+  if (h >= 22 || h < 7)  return { name: 'Asia',    color: '#FFD700', bg: 'rgba(255,215,0,.12)'   };
+  if (h >= 7  && h < 12) return { name: 'Europe',  color: '#58a6ff', bg: 'rgba(88,166,255,.12)'  };
+  if (h >= 12 && h < 17) return { name: 'US',      color: '#3fb950', bg: 'rgba(63,185,80,.12)'   };
+  return                          { name: 'Overlap', color: '#ff9800', bg: 'rgba(255,152,0,.12)'  };
 }
 
 // ─── Interval bar ────────────────────────────────────────────────────────────
@@ -63,7 +78,8 @@ function setActiveInterval(iv) {
 }
 
 // ─── Rendering ──────────────────────────────────────────────────────────────
-function renderContent({ price, fib, signals, signalSettings, lastUpdate, fetchError }) {
+function renderContent({ price, priceChangePct, fib, signals, signalSettings,
+                         lastUpdate, fetchError, signalHistory }) {
   if (fetchError && !price) {
     document.getElementById('content').innerHTML = `
       <div class="error-block">
@@ -97,12 +113,33 @@ function renderContent({ price, fib, signals, signalSettings, lastUpdate, fetchE
   let html = '';
 
   // ── Price block ──────────────────────────────────────────────────────────
+  const pct     = priceChangePct ?? 0;
+  const pctCls  = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+  const pctSign = pct > 0 ? '+' : '';
+  const session = getMarketSession();
+
   html += `
     <div class="price-block">
-      <div class="price-label">Gold (XAU/USD)</div>
-      <div class="price-value">${fmt(price)}</div>
-      <div class="price-update">Last update: ${fmtTime(lastUpdate)}</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between">
+        <div>
+          <div class="price-label">Gold (XAU/USD)</div>
+          <div class="price-value">${fmt(price)}</div>
+          <div class="price-change ${pctCls}">${pctSign}${pct.toFixed(3)}%</div>
+        </div>
+        <div style="text-align:right">
+          <span class="session-badge" style="background:${session.bg};color:${session.color};border:1px solid ${session.color}">
+            ${session.name} Session
+          </span>
+          <div class="price-update" style="margin-top:6px">Updated: ${fmtTime(lastUpdate)}</div>
+        </div>
+      </div>
     </div>`;
+
+  // ── Stats bar (win/loss from history) ─────────────────────────────────────
+  html += renderStatsBar(signalHistory);
+
+  // ── Signal consensus ──────────────────────────────────────────────────────
+  html += renderConsensus(signals);
 
   // ── Signal cards ─────────────────────────────────────────────────────────
   html += `<div class="signals-section">`;
@@ -169,11 +206,14 @@ function renderContent({ price, fib, signals, signalSettings, lastUpdate, fetchE
     html += `</div>`;
   }
 
+  // ── Signal history ────────────────────────────────────────────────────────
+  html += renderHistorySection(signalHistory);
+
   // ── Buttons ───────────────────────────────────────────────────────────────
   html += `
     <div class="btn-row">
-      <button class="btn btn-primary" id="btnChart">Open Chart</button>
-      <button class="btn btn-secondary" id="btnRefresh">Refresh</button>
+      <button class="btn btn-primary" id="btnChart">📊 Open Chart</button>
+      <button class="btn btn-secondary" id="btnRefresh">⟳ Refresh</button>
     </div>`;
 
   content.innerHTML = html;
@@ -228,6 +268,105 @@ function renderContent({ price, fib, signals, signalSettings, lastUpdate, fetchE
   });
 }
 
+// ─── Stats bar ───────────────────────────────────────────────────────────────
+function renderStatsBar(signalHistory) {
+  if (!signalHistory || signalHistory.length === 0) return '';
+
+  const wins    = signalHistory.filter(s => s.outcome === 'win').length;
+  const losses  = signalHistory.filter(s => s.outcome === 'loss').length;
+  const pending = signalHistory.filter(s => s.outcome === 'pending').length;
+  const total   = wins + losses;
+  const winRate = total > 0 ? Math.round(wins / total * 100) : null;
+
+  return `
+    <div class="stats-bar">
+      <div class="stat-item">
+        <div class="stat-value" style="color:#3fb950">${wins}</div>
+        <div class="stat-label">Wins</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <div class="stat-value" style="color:#f85149">${losses}</div>
+        <div class="stat-label">Losses</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <div class="stat-value" style="color:#58a6ff">${winRate !== null ? winRate + '%' : '–'}</div>
+        <div class="stat-label">Win Rate</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <div class="stat-value" style="color:#8b949e">${pending}</div>
+        <div class="stat-label">Pending</div>
+      </div>
+    </div>`;
+}
+
+// ─── Signal consensus bar ─────────────────────────────────────────────────────
+function renderConsensus(signals) {
+  if (!signals) return '';
+
+  let buys = 0, sells = 0;
+  for (const { id } of SIGNAL_DEFS) {
+    const t = signals[id]?.type;
+    if (t === 'BUY')  buys++;
+    if (t === 'SELL') sells++;
+  }
+  const total = buys + sells;
+  if (total === 0) return '';
+
+  const buyPct  = Math.round(buys  / total * 100);
+  const sellPct = 100 - buyPct;
+  const bias    = buys > sells ? 'BULLISH' : buys < sells ? 'BEARISH' : 'NEUTRAL';
+  const bColor  = buys > sells ? '#3fb950' : buys < sells ? '#f85149' : '#8b949e';
+
+  return `
+    <div class="consensus-row">
+      <span class="consensus-label">🧭 Consensus:</span>
+      <div class="consensus-bar">
+        <div class="consensus-fill" style="width:${buyPct}%;background:linear-gradient(90deg,#3fb950,#238636)"></div>
+      </div>
+      <span class="consensus-pct" style="color:${bColor}">${bias}</span>
+    </div>`;
+}
+
+// ─── Signal history section ───────────────────────────────────────────────────
+function renderHistorySection(signalHistory) {
+  if (!signalHistory || signalHistory.length === 0) return '';
+
+  const items = signalHistory.slice(0, 25).map(entry => {
+    const outcomeIcon = entry.outcome === 'win'  ? '✓' :
+                        entry.outcome === 'loss' ? '✗' : '⏳';
+    const outcomeCls  = entry.outcome === 'win'  ? 'outcome-win'  :
+                        entry.outcome === 'loss' ? 'outcome-loss' : 'outcome-pending';
+    const typeCls     = entry.type === 'BUY' ? 'badge-buy' : 'badge-sell';
+    const icon        = INDICATOR_ICONS[entry.indicatorId] || '📊';
+    const dt          = new Date(entry.time);
+    const dateStr     = dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const timeStr     = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    return `
+      <div class="history-item">
+        <div class="history-outcome ${outcomeCls}">${outcomeIcon}</div>
+        <div class="history-info">
+          <div class="history-name">${icon} ${entry.indicatorName}</div>
+          <div class="history-time">${dateStr} ${timeStr}</div>
+        </div>
+        <div class="history-right">
+          <span class="signal-type-badge ${typeCls}">${entry.type}</span>
+          <div class="history-price">$${entry.price.toFixed(0)}</div>
+          <div class="history-strength">${entry.strength}%</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="signals-section" style="border-top:1px solid #21262d">
+      <div class="section-title">📜 Signal History</div>
+      <div class="history-list">${items}</div>
+    </div>`;
+}
+
 // ─── Storage helpers ─────────────────────────────────────────────────────────
 function saveSignalSetting(id, changes) {
   chrome.storage.local.get('signalSettings', ({ signalSettings = {} }) => {
@@ -243,7 +382,8 @@ function saveSignalSetting(id, changes) {
 // ─── Data Loading ─────────────────────────────────────────────────────────────
 function loadData() {
   chrome.storage.local.get(
-    ['price', 'fib', 'signals', 'signalSettings', 'lastUpdate', 'fetchError'],
+    ['price', 'priceChangePct', 'fib', 'signals', 'signalSettings',
+     'lastUpdate', 'fetchError', 'signalHistory'],
     (data) => {
       if (!data.price && !data.fetchError) {
         document.getElementById('content').innerHTML =
@@ -257,7 +397,8 @@ function loadData() {
 
 // Listen for storage changes (background updates while popup is open)
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.price || changes.signals || changes.fetchError)) {
+  if (area === 'local' &&
+      (changes.price || changes.signals || changes.fetchError || changes.signalHistory)) {
     // Keep interval bar in sync if interval was changed from elsewhere
     if (changes.selectedInterval) {
       setActiveInterval(changes.selectedInterval.newValue || '1h');
