@@ -11,10 +11,9 @@ const FETCH_PERIOD_MIN = 1;      // default poll (minutes) – overridden by int
 const DEBOUNCE_MS      = 10 * 60 * 1000; // 10 minutes between notifications
 
 // How many recent signals to keep in the sync storage backup.
-// Each entry is ~300–400 bytes; 60 entries ≈ 20 KB which stays well within
-// the chrome.storage.sync per-item quota of 8 KB when stored as one item.
-// In practice the JSON is chunked to stay under the item limit.
-const SYNC_BACKUP_LIMIT = 60;
+// Chrome's per-item quota is 8 KB. Each compact entry is ~120 bytes, so
+// 20 entries ≈ 2.4 KB – safely within the limit.
+const SYNC_BACKUP_LIMIT = 20;
 // How many historical signals to keep
 const MAX_SIGNAL_HISTORY = 200;
 // Evaluate signal outcome after this many candles
@@ -622,8 +621,8 @@ async function fetchAndAnalyze() {
   });
 
   // Backup to sync storage (survives extension reinstalls).
-  // Keep only the last 60 signals and strip heavy fields to stay within the
-  // chrome.storage.sync per-item 8 KB quota.
+  // Keep only the last 20 signals and strip heavy/redundant fields to stay
+  // under Chrome's 8 KB per-item quota for chrome.storage.sync.
   try {
     const compact = signalHistory.slice(0, SYNC_BACKUP_LIMIT).map(e => ({
       indicatorId  : e.indicatorId,
@@ -635,8 +634,6 @@ async function fetchAndAnalyze() {
       outcome      : e.outcome,
       outcomePrice : e.outcomePrice,
       interval     : e.interval,
-      intervalMs   : e.intervalMs,
-      outcomeDeadline: e.outcomeDeadline,
     }));
     await chrome.storage.sync.set({ signalHistoryBackup: compact });
   } catch (e) {
