@@ -159,7 +159,7 @@
     table.signal-table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 660px;
+      min-width: 820px;
     }
     table.signal-table th {
       background: #161b22;
@@ -201,6 +201,20 @@
     }
     .tb-buy  { background: #238636; color: #fff; }
     .tb-sell { background: #da3633; color: #fff; }
+
+    /* Interval / timeframe badge */
+    .tf-badge {
+      display: inline-block;
+      font-size: 10px; font-weight: 700;
+      padding: 2px 6px; border-radius: 4px; letter-spacing: .2px;
+      background: #2d3748; color: #FFD700; border: 1px solid #4a5568;
+    }
+
+    /* Deadline / duration label */
+    .deadline-label { font-size: 11px; color: #8b949e; }
+    .deadline-label.due    { color: #ff9800; }
+    .deadline-label.done   { color: #3fb950; }
+    .deadline-label.overdue { color: #f85149; }
 
     .pnl-pos { color: #3fb950; font-weight: 600; }
     .pnl-neg { color: #f85149; font-weight: 600; }
@@ -334,7 +348,7 @@
   <div>
     <div class="section-heading">📜 Sinyal Geçmişi</div>
 
-    <!-- Filter row -->
+    <!-- Filter row – outcome/type -->
     <div class="filter-row" id="filterRow">
       <span class="filter-label">Filtre:</span>
       <button class="filter-btn active" data-filter="all">Tümü</button>
@@ -346,16 +360,30 @@
       <input class="search-input" id="searchInput" type="text" placeholder="🔍 İndikatör ara…">
     </div>
 
+    <!-- Filter row – interval/timeframe -->
+    <div class="filter-row" id="filterInterval">
+      <span class="filter-label">Zaman dilimi:</span>
+      <button class="filter-btn active" data-interval="all">Tümü</button>
+      <button class="filter-btn" data-interval="1m">1m</button>
+      <button class="filter-btn" data-interval="5m">5m</button>
+      <button class="filter-btn" data-interval="15m">15m</button>
+      <button class="filter-btn" data-interval="30m">30m</button>
+      <button class="filter-btn" data-interval="1h">1h</button>
+      <button class="filter-btn" data-interval="1d">1d</button>
+    </div>
+
     <div class="table-wrap">
       <table class="signal-table">
         <thead>
           <tr>
             <th data-col="outcome">Sonuç <span class="sort-arrow">↕</span></th>
             <th data-col="time">Tarih <span class="sort-arrow">↕</span></th>
+            <th data-col="interval">Zaman Dilimi <span class="sort-arrow">↕</span></th>
             <th data-col="indicatorName">İndikatör <span class="sort-arrow">↕</span></th>
             <th data-col="type">Tip <span class="sort-arrow">↕</span></th>
             <th data-col="price">Giriş Fiyatı <span class="sort-arrow">↕</span></th>
             <th data-col="outcomePrice">Çıkış Fiyatı <span class="sort-arrow">↕</span></th>
+            <th data-col="outcomeDeadline">Değerlendirme <span class="sort-arrow">↕</span></th>
             <th data-col="pnlAbs">P&amp;L ($) <span class="sort-arrow">↕</span></th>
             <th data-col="pnlPct">P&amp;L (%) <span class="sort-arrow">↕</span></th>
             <th data-col="strength">Güç <span class="sort-arrow">↕</span></th>

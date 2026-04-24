@@ -535,15 +535,19 @@ async function updateSignalHistory(candles, signals, price) {
     if (!sig?.type) continue;
     if (sig.time <= (lastTimes[id] || 0)) continue;
 
+    const outcomeDeadline = sig.time + OUTCOME_CANDLES * intervalMs;
     history.push({
-      indicatorId  : id,
-      indicatorName: name,
-      type         : sig.type,
+      indicatorId    : id,
+      indicatorName  : name,
+      type           : sig.type,
       price,
-      time         : sig.time,
-      strength     : sig.strength || 0,
-      message      : sig.message,
-      outcome      : 'pending',
+      time           : sig.time,
+      strength       : sig.strength || 0,
+      message        : sig.message,
+      outcome        : 'pending',
+      interval       : selectedInterval,   // e.g. '1h'
+      intervalMs,                          // candle duration in ms
+      outcomeDeadline,                     // timestamp when outcome will be evaluated
     });
   }
 

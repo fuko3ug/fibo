@@ -20,13 +20,14 @@ const SIGNAL_DEFS = [
 const PAGE_SIZE = 20;
 
 // ─── State ────────────────────────────────────────────────────────────────────
-let allEntries  = [];   // enriched history (with pnl fields)
-let filtered    = [];   // after filter + search
-let sortCol     = 'time';
-let sortDir     = -1;   // -1 = desc, 1 = asc
-let filterVal   = 'all';
-let searchVal   = '';
-let currentPage = 1;
+let allEntries    = [];   // enriched history (with pnl fields)
+let filtered      = [];   // after filter + search
+let sortCol       = 'time';
+let sortDir       = -1;   // -1 = desc, 1 = asc
+let filterVal     = 'all';
+let intervalFilter = 'all';
+let searchVal     = '';
+let currentPage   = 1;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function fmt(n)   { return n != null ? '$' + n.toFixed(2) : '–'; }
@@ -37,6 +38,49 @@ function fmtDate(ms) {
   const d = new Date(ms);
   return d.toLocaleDateString([], { day: '2-digit', month: 'short', year: '2-digit' })
     + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * Returns a human-readable "how long until / since" label for the outcome deadline.
+ *  pending  → remaining time or "geçti"
+ *  resolved → outcome time (already evaluated)
+ */
+function fmtDeadline(entry) {
+  if (!entry.outcomeDeadline) return '–';
+  const now = Date.now();
+
+  if (entry.outcome !== 'pending') {
+    // Show when the outcome was measured
+    return `<span class="deadline-label done">${fmtDate(entry.outcomeDeadline)}</span>`;
+  }
+
+  const remaining = entry.outcomeDeadline - now;
+  if (remaining <= 0) {
+    return `<span class="deadline-label overdue">Değerlendiriliyor…</span>`;
+  }
+  const mins  = Math.floor(remaining / 60000);
+  const hours = Math.floor(mins / 60);
+  const days  = Math.floor(hours / 24);
+  let label;
+  if (days > 0)        label = `${days}g ${hours % 24}s kaldı`;
+  else if (hours > 0)  label = `${hours}s ${mins % 60}d kaldı`;
+  else                 label = `${mins}d kaldı`;
+  return `<span class="deadline-label due">${label}</span>`;
+}
+
+/**
+ * Returns a short human-readable label for the signal's validity window.
+ * e.g. "1h × 5 candles = ~5 saat"
+ */
+function fmtDuration(entry) {
+  if (!entry.intervalMs) return '–';
+  const totalMs = entry.intervalMs * 5; // OUTCOME_CANDLES = 5
+  const mins  = Math.round(totalMs / 60000);
+  const hours = Math.floor(mins / 60);
+  const days  = Math.floor(hours / 24);
+  if (days > 0)        return `~${days}g ${hours % 24}s`;
+  if (hours > 0)       return `~${hours} saat`;
+  return `~${mins} dk`;
 }
 
 /** Compute P&L for a single history entry.
@@ -202,6 +246,10 @@ function applyFilters() {
     }
   }
 
+  if (intervalFilter !== 'all') {
+    result = result.filter(e => e.interval === intervalFilter);
+  }
+
   if (searchVal) {
     const q = searchVal.toLowerCase();
     result = result.filter(e =>
@@ -232,7 +280,7 @@ function renderTable() {
   const slice = filtered.slice(start, start + PAGE_SIZE);
 
   if (slice.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;color:#8b949e">
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:30px;color:#8b949e">
       ${filtered.length === 0 ? '⚠️ Bu filtreyle eşleşen sinyal bulunamadı.' : ''}
     </td></tr>`;
     return;
@@ -256,16 +304,23 @@ function renderTable() {
     const rowCls  = isBest ? 'is-best' : isWorst ? 'is-worst' : '';
 
     const strBarColor = entry.strength > 70 ? '#3fb950' : entry.strength > 40 ? '#ff9800' : '#58a6ff';
-
     const icon = SIGNAL_DEFS.find(d => d.id === entry.indicatorId)?.icon || '📊';
+    const tfLabel = entry.interval || '–';
+    const durLabel = fmtDuration(entry);
+    const deadlineHtml = fmtDeadline(entry);
 
     return `<tr class="${rowCls}">
       <td><span class="outcome-chip ${outcomeCls}">${outcomeIcon}</span></td>
       <td style="color:#8b949e">${fmtDate(entry.time)}</td>
+      <td>
+        <span class="tf-badge">${tfLabel}</span>
+        <span style="color:#8b949e;font-size:10px;margin-left:4px">${durLabel}</span>
+      </td>
       <td><span style="font-weight:600">${icon} ${entry.indicatorName || entry.indicatorId}</span></td>
       <td><span class="type-badge ${typeCls}">${entry.type}</span></td>
       <td>${fmt(entry.price)}</td>
       <td>${entry.outcomePrice != null ? fmt(entry.outcomePrice) : '<span style="color:#8b949e">bekliyor</span>'}</td>
+      <td>${deadlineHtml}</td>
       <td class="${pnlColor}">${entry.pnlAbs != null ? (entry.pnlAbs >= 0 ? '+' : '') + '$' + entry.pnlAbs.toFixed(2) : '<span class="pnl-neu">–</span>'}</td>
       <td class="${pnlColor}">${entry.pnlPct != null ? pct(entry.pnlPct) : '<span class="pnl-neu">–</span>'}</td>
       <td>
@@ -336,12 +391,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Filter buttons
-  document.querySelectorAll('.filter-btn').forEach(btn => {
+  // Filter buttons (outcome / type)
+  document.querySelectorAll('#filterRow .filter-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#filterRow .filter-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       filterVal = btn.dataset.filter;
+      applyFilters();
+    });
+  });
+
+  // Interval filter buttons
+  document.querySelectorAll('#filterInterval .filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#filterInterval .filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      intervalFilter = btn.dataset.interval;
       applyFilters();
     });
   });
