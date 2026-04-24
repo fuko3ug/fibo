@@ -31,7 +31,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["chart.html", "stats.html"],
+      "resources": ["chart.html", "stats.html", "consensus.html"],
       "matches": ["<all_urls>"]
     }
   ]

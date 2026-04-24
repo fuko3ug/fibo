@@ -323,6 +323,8 @@ function render() {
   // Draw historical signal outcome markers (✓ / ✗)
   if (state.signalHistory && state.signalHistory.length > 0) {
     drawHistoricalSignals(ctx, state.signalHistory, allCandles, xForIndex, yScale);
+    // Draw entry→exit price segments for resolved signals
+    drawSignalPriceLines(ctx, state.signalHistory, allCandles, xForIndex, yScale, chartL, chartR);
   }
 
   // Draw signal marker
@@ -595,6 +597,98 @@ function drawHistoricalSignals(ctx, signalHistory, candles, xForIndex, yScale) {
     ctx.textAlign      = 'center';
     ctx.textBaseline   = 'middle';
     ctx.fillText(isWin ? '✓' : '✗', x, y);
+
+    ctx.restore();
+  }
+}
+
+/**
+ * For each resolved signal in history: draw a horizontal line from the entry
+ * price to the outcome candle's position, with dots and price labels at both
+ * ends – like a number-line segment on the price axis.
+ */
+function drawSignalPriceLines(ctx, signalHistory, candles, xForIndex, yScale, chartL, chartR) {
+  if (!signalHistory || signalHistory.length === 0) return;
+
+  // Map candle times for quick lookup
+  const timeToIdx = new Map();
+  for (let i = 0; i < candles.length; i++) timeToIdx.set(candles[i].time, i);
+
+  for (const entry of signalHistory) {
+    if (entry.outcome === 'pending' || entry.outcomePrice == null) continue;
+
+    // Find entry candle
+    let entryIdx = timeToIdx.get(entry.time);
+    if (entryIdx === undefined) {
+      entryIdx = candles.findIndex(c => c.time >= entry.time);
+      if (entryIdx < 0) continue;
+    }
+
+    // Find outcome candle (first candle at or after outcomeDeadline)
+    const deadline = entry.outcomeDeadline || (entry.time + 5 * (entry.intervalMs || 3600000));
+    let exitIdx = candles.findIndex(c => c.time >= deadline);
+    if (exitIdx < 0) exitIdx = candles.length - 1; // use last candle if not found
+
+    if (entryIdx >= candles.length || exitIdx < 0) continue;
+
+    const isWin    = entry.outcome === 'win';
+    const isBuy    = entry.type   === 'BUY';
+    const color    = isWin ? '#3fb950' : '#f85149';
+    const xEntry   = xForIndex(entryIdx);
+    const xExit    = xForIndex(exitIdx);
+    const yEntry   = yScale(entry.price);
+    const yExit    = yScale(entry.outcomePrice);
+
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+
+    // Horizontal line at entry price from entry candle to exit candle
+    ctx.strokeStyle = '#58a6ff';
+    ctx.lineWidth   = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(xEntry, yEntry);
+    ctx.lineTo(xExit,  yEntry);
+    ctx.stroke();
+
+    // Vertical line at exit candle from entry price to exit price
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 1.5;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(xExit, yEntry);
+    ctx.lineTo(xExit, yExit);
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.9;
+
+    // Entry dot
+    ctx.fillStyle = '#58a6ff';
+    ctx.beginPath();
+    ctx.arc(xEntry, yEntry, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Exit dot
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(xExit, yExit, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Price labels (only if there is room)
+    ctx.globalAlpha = 0.85;
+    ctx.font        = '9px Segoe UI, sans-serif';
+    ctx.textBaseline = 'middle';
+
+    const entryLabel = '$' + entry.price.toFixed(1);
+    const exitLabel  = '$' + entry.outcomePrice.toFixed(1);
+
+    ctx.fillStyle  = '#58a6ff';
+    ctx.textAlign  = xEntry > chartL + 40 ? 'right' : 'left';
+    ctx.fillText(entryLabel, xEntry + (ctx.textAlign === 'right' ? -5 : 5), yEntry);
+
+    ctx.fillStyle  = color;
+    ctx.textAlign  = xExit < chartR - 40 ? 'left' : 'right';
+    ctx.fillText(exitLabel, xExit + (ctx.textAlign === 'left' ? 5 : -5), yExit);
 
     ctx.restore();
   }

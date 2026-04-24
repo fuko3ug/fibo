@@ -11,7 +11,7 @@ const FETCH_PERIOD_MIN = 1;      // default poll (minutes) – overridden by int
 const DEBOUNCE_MS      = 10 * 60 * 1000; // 10 minutes between notifications
 
 // How many historical signals to keep
-const MAX_SIGNAL_HISTORY = 50;
+const MAX_SIGNAL_HISTORY = 200;
 // Evaluate signal outcome after this many candles
 const OUTCOME_CANDLES = 5;
 
@@ -43,6 +43,23 @@ const FORECAST_PERIODS = 12;
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 chrome.runtime.onInstalled.addListener(async () => {
+  // If local history is empty (fresh install or data was cleared), restore from
+  // the sync-storage backup which survives extension reinstalls.
+  const { signalHistory: localHistory = [] } =
+    await chrome.storage.local.get('signalHistory');
+  if (localHistory.length === 0) {
+    try {
+      const { signalHistoryBackup = [] } =
+        await chrome.storage.sync.get('signalHistoryBackup');
+      if (signalHistoryBackup.length > 0) {
+        await chrome.storage.local.set({ signalHistory: signalHistoryBackup });
+        console.log(`[FiboGold] Restored ${signalHistoryBackup.length} signals from sync backup.`);
+      }
+    } catch (e) {
+      console.warn('[FiboGold] Could not restore sync backup:', e);
+    }
+  }
+
   const { selectedInterval = DEFAULT_INTERVAL } =
     await chrome.storage.local.get('selectedInterval');
   await updateAlarm(selectedInterval);
@@ -598,6 +615,29 @@ async function fetchAndAnalyze() {
           message: fibSig.message, time: fibSig.time }
       : null,
   });
+
+  // Backup to sync storage (survives extension reinstalls).
+  // Keep only the last 60 signals and strip heavy fields to stay within the
+  // chrome.storage.sync per-item 8 KB quota.
+  try {
+    const compact = signalHistory.slice(0, 60).map(e => ({
+      indicatorId  : e.indicatorId,
+      indicatorName: e.indicatorName,
+      type         : e.type,
+      price        : e.price,
+      time         : e.time,
+      strength     : e.strength,
+      outcome      : e.outcome,
+      outcomePrice : e.outcomePrice,
+      interval     : e.interval,
+      intervalMs   : e.intervalMs,
+      outcomeDeadline: e.outcomeDeadline,
+    }));
+    await chrome.storage.sync.set({ signalHistoryBackup: compact });
+  } catch (e) {
+    // Sync quota may be exceeded – non-fatal, just log it
+    console.warn('[FiboGold] sync backup failed:', e);
+  }
 
   // Badge = current gold price
   chrome.action.setBadgeText({ text: '$' + Math.round(price) });

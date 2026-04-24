@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Consensus – Fibonacci Gold Signal</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 13px;
+      min-height: 100vh;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 24px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      position: sticky; top: 0; z-index: 50;
+    }
+    .topbar-left  { display: flex; align-items: center; gap: 12px; }
+    .logo         { font-size: 22px; }
+    .title        { font-size: 16px; font-weight: 700; color: #FFD700; }
+    .sub          { font-size: 12px; color: #8b949e; }
+    .topbar-right { display: flex; align-items: center; gap: 10px; }
+    .btn-nav {
+      padding: 6px 14px;
+      background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+      color: #e6edf3; cursor: pointer; font-size: 12px; font-weight: 600;
+    }
+    .btn-nav:hover { background: #2d333b; }
+
+    /* ── Page ── */
+    .page { max-width: 900px; margin: 0 auto; padding: 20px 24px 60px; }
+    .section-heading {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
+      color: #8b949e; margin-bottom: 10px; padding-bottom: 6px;
+      border-bottom: 1px solid #21262d;
+    }
+
+    /* ── Main consensus card ── */
+    .consensus-main {
+      background: #161b22;
+      border: 2px solid #30363d;
+      border-radius: 14px;
+      padding: 28px 32px;
+      text-align: center;
+      margin-bottom: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+    .consensus-main.bullish { border-color: #238636; background: #0d1e12; }
+    .consensus-main.bearish { border-color: #da3633; background: #1e0d0d; }
+    .consensus-main.neutral { border-color: #444c56; }
+
+    .consensus-signal-label {
+      font-size: 11px; text-transform: uppercase; letter-spacing: .8px;
+      color: #8b949e; margin-bottom: 8px;
+    }
+    .consensus-signal-val {
+      font-size: 48px; font-weight: 800; line-height: 1;
+      letter-spacing: -1px; margin-bottom: 8px;
+    }
+    .consensus-main.bullish .consensus-signal-val { color: #3fb950; }
+    .consensus-main.bearish .consensus-signal-val { color: #f85149; }
+    .consensus-main.neutral .consensus-signal-val { color: #8b949e; }
+
+    .consensus-conf {
+      font-size: 15px; font-weight: 600; color: #8b949e; margin-bottom: 20px;
+    }
+
+    /* Dual bar */
+    .dual-bar-wrap { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .dual-bar-label { font-size: 11px; font-weight: 700; min-width: 30px; }
+    .dual-bar { flex: 1; height: 10px; background: #21262d; border-radius: 5px; overflow: hidden; display: flex; }
+    .dual-bar-buy  { background: linear-gradient(90deg,#238636,#3fb950); transition: width .5s; }
+    .dual-bar-sell { background: linear-gradient(90deg,#da3633,#f85149); transition: width .5s; }
+    .dual-bar-pct  { font-size: 12px; font-weight: 700; min-width: 36px; text-align: right; }
+
+    /* ── Indicator breakdown grid ── */
+    .breakdown-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+    @media (max-width: 700px) { .breakdown-grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 440px) { .breakdown-grid { grid-template-columns: 1fr; } }
+
+    .ind-card {
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 10px;
+      padding: 14px;
+      transition: border-color .15s;
+    }
+    .ind-card:hover { border-color: #30363d; }
+    .ind-card.signal-buy  { border-color: rgba(35,134,54,.5); }
+    .ind-card.signal-sell { border-color: rgba(218,54,51,.5); }
+
+    .ind-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .ind-icon   { font-size: 18px; }
+    .ind-name   { font-size: 13px; font-weight: 700; flex: 1; }
+
+    .type-badge {
+      font-size: 10px; font-weight: 700;
+      padding: 2px 7px; border-radius: 10px;
+    }
+    .tb-buy  { background: #238636; color: #fff; }
+    .tb-sell { background: #da3633; color: #fff; }
+    .tb-neutral { background: #30363d; color: #8b949e; }
+
+    /* Weight / win-rate ring */
+    .ring-wrap { display: flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+    .ring { position: relative; width: 64px; height: 64px; }
+    .ring svg { transform: rotate(-90deg); }
+    .ring-track { fill: none; stroke: #21262d; stroke-width: 6; }
+    .ring-fill  { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset .6s ease; }
+    .ring-label {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center; flex-direction: column;
+    }
+    .ring-pct { font-size: 13px; font-weight: 700; line-height: 1; }
+    .ring-sub { font-size: 9px; color: #8b949e; margin-top: 2px; }
+
+    /* Stat rows */
+    .ind-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 8px; }
+    .ind-stat-lbl { font-size: 9px; text-transform: uppercase; letter-spacing: .4px; color: #8b949e; }
+    .ind-stat-val { font-size: 12px; font-weight: 600; }
+
+    /* Weight bar */
+    .weight-row { display: flex; align-items: center; gap: 6px; margin: 8px 0 2px; }
+    .weight-lbl { font-size: 9px; text-transform: uppercase; color: #8b949e; flex-shrink: 0; }
+    .weight-track { flex: 1; height: 4px; background: #21262d; border-radius: 2px; overflow: hidden; }
+    .weight-fill  { height: 100%; border-radius: 2px; transition: width .5s; }
+    .weight-val   { font-size: 10px; font-weight: 700; min-width: 28px; text-align: right; }
+
+    /* Contribution badge */
+    .contrib {
+      font-size: 10px; text-align: center; margin-top: 6px;
+      padding: 2px 0; border-top: 1px solid #21262d; color: #8b949e;
+    }
+    .contrib-pos { color: #3fb950; }
+    .contrib-neg { color: #f85149; }
+
+    /* ── Loading ── */
+    #loadingOverlay {
+      position: fixed; inset: 0; background: #0d1117;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 14px; z-index: 200;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #21262d; border-top-color: #FFD700;
+      border-radius: 50%; animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { font-size: 14px; color: #8b949e; }
+
+    /* ── Info note ── */
+    .info-note {
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      padding: 12px 16px; font-size: 12px; color: #8b949e; line-height: 1.6;
+    }
+    .info-note strong { color: #e6edf3; }
+  </style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <div class="loading-text">Consensus hesaplanıyor…</div>
+</div>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo">🧭</div>
+    <div>
+      <div class="title">Consensus Analizi</div>
+      <div class="sub">XAU/USD – Kazanma oranı ağırlıklı sinyal</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <button class="btn-nav" id="btnStats">📊 İstatistikler</button>
+    <button class="btn-nav" id="btnBack">← Dashboard</button>
+  </div>
+</div>
+
+<!-- Page content -->
+<div class="page" id="page" style="display:none">
+
+  <!-- Overall consensus -->
+  <div style="margin-bottom:24px">
+    <div class="section-heading">🧭 Ağırlıklı Konsensüs Sinyali</div>
+    <div class="consensus-main" id="consensusMain">
+      <div class="consensus-signal-label">Genel Yön</div>
+      <div class="consensus-signal-val" id="consensusVal">–</div>
+      <div class="consensus-conf" id="consensusConf">–</div>
+      <div class="dual-bar-wrap">
+        <span class="dual-bar-label" style="color:#3fb950">AL</span>
+        <div class="dual-bar">
+          <div class="dual-bar-buy"  id="dualBuy"  style="width:50%"></div>
+          <div class="dual-bar-sell" id="dualSell" style="width:50%"></div>
+        </div>
+        <span class="dual-bar-label" style="color:#f85149;text-align:right">SAT</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;color:#8b949e;margin-top:4px">
+        <span id="buyPctLbl">–</span>
+        <span id="sellPctLbl">–</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-indicator breakdown -->
+  <div style="margin-bottom:24px">
+    <div class="section-heading">📐 İndikatör Bazlı Ağırlık Dağılımı</div>
+    <div class="breakdown-grid" id="breakdownGrid"></div>
+  </div>
+
+  <!-- Info note -->
+  <div class="info-note">
+    <strong>Ağırlık nasıl hesaplanır?</strong><br>
+    Her indikatörün ağırlığı <em>kazanma oranına</em> eşittir (kazanan sinyal sayısı ÷ toplam değerlendirilen sinyal sayısı). Geçmişi olmayan indikatörler için varsayılan ağırlık %50 kullanılır. Konsensüs skoru şu formülle hesaplanır:<br><br>
+    <code>skor = Σ(yön × ağırlık) / Σ(ağırlık)</code><br><br>
+    Yön: BUY=+1, SELL=-1, nötr=0. Skor &gt; 0 → <strong style="color:#3fb950">BULLISH</strong>, skor &lt; 0 → <strong style="color:#f85149">BEARISH</strong>, skor = 0 → NEUTRAL.
+  </div>
+</div>
+
+<script>
+const SIGNAL_DEFS = [
+  { id: 'fibonacci',  name: 'Fibonacci',        icon: '📐' },
+  { id: 'rsi',        name: 'RSI (14)',          icon: '📊' },
+  { id: 'macd',       name: 'MACD',              icon: '📈' },
+  { id: 'bollinger',  name: 'Bollinger Bands',   icon: '🎯' },
+  { id: 'stochastic', name: 'Stochastic (14)',   icon: '⚡' },
+  { id: 'ema_cross',  name: 'EMA Cross (9/21)',  icon: '✂️' },
+];
+
+function pct(n) {
+  return n != null ? (n >= 0 ? '+' : '') + n.toFixed(2) + '%' : '–';
+}
+
+/** Build per-indicator stats from signal history. */
+function buildStats(signalHistory) {
+  const map = {};
+  for (const def of SIGNAL_DEFS) {
+    const group    = signalHistory.filter(e => e.indicatorId === def.id);
+    const resolved = group.filter(e => e.outcome !== 'pending');
+    const wins     = resolved.filter(e => e.outcome === 'win').length;
+    const total    = resolved.length;
+    const winRate  = total > 0 ? wins / total : 0.5; // default 50% if no history
+    map[def.id] = { wins, losses: total - wins, total, pending: group.filter(e => e.outcome === 'pending').length, winRate };
+  }
+  return map;
+}
+
+/** Compute weighted consensus from current signals and win-rate weights. */
+function computeConsensus(signals, stats) {
+  let weightedSum = 0;
+  let totalWeight = 0;
+  let buyWeight   = 0;
+  let sellWeight  = 0;
+
+  for (const def of SIGNAL_DEFS) {
+    const sig     = signals?.[def.id];
+    const type    = sig?.type || null;
+    const weight  = stats[def.id].winRate;      // 0–1
+    const dir     = type === 'BUY' ? 1 : type === 'SELL' ? -1 : 0;
+
+    if (type) { // only count indicators with an active signal
+      weightedSum  += dir * weight;
+      totalWeight  += weight;
+      if (dir === 1)  buyWeight  += weight;
+      if (dir === -1) sellWeight += weight;
+    }
+  }
+
+  const score    = totalWeight > 0 ? weightedSum / totalWeight : 0;
+  const totalW   = buyWeight + sellWeight || 1;
+  const buyPct   = Math.round(buyWeight  / totalW * 100);
+  const sellPct  = 100 - buyPct;
+
+  return { score, buyPct, sellPct };
+}
+
+function renderConsensusMain(signals, stats) {
+  const { score, buyPct, sellPct } = computeConsensus(signals, stats);
+
+  const isNull  = Object.values(signals || {}).every(s => !s?.type);
+  const bias    = score > 0.05 ? 'BULLISH' : score < -0.05 ? 'BEARISH' : 'NEUTRAL';
+  const conf    = isNull ? 0 : Math.round(Math.abs(score) * 100);
+  const cls     = bias === 'BULLISH' ? 'bullish' : bias === 'BEARISH' ? 'bearish' : 'neutral';
+
+  const box = document.getElementById('consensusMain');
+  box.className = `consensus-main ${cls}`;
+  document.getElementById('consensusVal').textContent   = bias;
+  document.getElementById('consensusConf').textContent  = isNull ? 'Yeterli sinyal yok' : `Güven: ${conf}%`;
+  document.getElementById('dualBuy').style.width        = buyPct  + '%';
+  document.getElementById('dualSell').style.width       = sellPct + '%';
+  document.getElementById('buyPctLbl').textContent      = `AL ${buyPct}%`;
+  document.getElementById('sellPctLbl').textContent     = `SAT ${sellPct}%`;
+}
+
+function renderBreakdown(signals, stats) {
+  const grid = document.getElementById('breakdownGrid');
+
+  grid.innerHTML = SIGNAL_DEFS.map(def => {
+    const sig      = signals?.[def.id];
+    const type     = sig?.type || null;
+    const strength = sig?.strength ?? 0;
+    const st       = stats[def.id];
+    const winRate  = st.winRate;
+    const weight   = winRate;          // weight ∈ [0,1]
+    const dir      = type === 'BUY' ? 1 : type === 'SELL' ? -1 : 0;
+    const contrib  = type ? dir * weight : null;
+
+    const ringColor   = winRate >= 0.6 ? '#3fb950' : winRate >= 0.45 ? '#ff9800' : '#f85149';
+    const ringCircumf = 2 * Math.PI * 24;
+    const dashOffset  = ringCircumf * (1 - winRate);
+
+    const weightColor = winRate >= 0.6 ? '#3fb950' : winRate >= 0.45 ? '#ff9800' : '#f85149';
+    const badgeCls    = type === 'BUY' ? 'tb-buy' : type === 'SELL' ? 'tb-sell' : 'tb-neutral';
+    const cardCls     = type === 'BUY' ? 'signal-buy' : type === 'SELL' ? 'signal-sell' : '';
+
+    const contribLabel = contrib === null
+      ? '<span style="color:#8b949e">aktif sinyal yok</span>'
+      : contrib > 0
+        ? `<span class="contrib-pos">+${(contrib * 100).toFixed(1)}% katkı (AL yönü)</span>`
+        : contrib < 0
+          ? `<span class="contrib-neg">${(contrib * 100).toFixed(1)}% katkı (SAT yönü)</span>`
+          : '<span style="color:#8b949e">sıfır katkı</span>';
+
+    return `
+      <div class="ind-card ${cardCls}">
+        <div class="ind-header">
+          <span class="ind-icon">${def.icon}</span>
+          <span class="ind-name">${def.name}</span>
+          <span class="type-badge ${badgeCls}">${type || '—'}</span>
+        </div>
+
+        <div class="ring-wrap">
+          <div class="ring">
+            <svg viewBox="0 0 54 54" width="64" height="64">
+              <circle class="ring-track" cx="27" cy="27" r="24"/>
+              <circle class="ring-fill" cx="27" cy="27" r="24"
+                stroke="${ringColor}"
+                stroke-dasharray="${ringCircumf.toFixed(1)}"
+                stroke-dashoffset="${dashOffset.toFixed(1)}"/>
+            </svg>
+            <div class="ring-label">
+              <span class="ring-pct" style="color:${ringColor}">${(winRate * 100).toFixed(0)}%</span>
+              <span class="ring-sub">win rate</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ind-stats">
+          <div>
+            <div class="ind-stat-lbl">Kazanan</div>
+            <div class="ind-stat-val" style="color:#3fb950">${st.wins}</div>
+          </div>
+          <div>
+            <div class="ind-stat-lbl">Kaybeden</div>
+            <div class="ind-stat-val" style="color:#f85149">${st.losses}</div>
+          </div>
+          <div>
+            <div class="ind-stat-lbl">Bekleyen</div>
+            <div class="ind-stat-val" style="color:#8b949e">${st.pending}</div>
+          </div>
+          <div>
+            <div class="ind-stat-lbl">Sinyal Gücü</div>
+            <div class="ind-stat-val" style="color:#58a6ff">${strength}%</div>
+          </div>
+        </div>
+
+        <div class="weight-row">
+          <span class="weight-lbl">Ağırlık</span>
+          <div class="weight-track">
+            <div class="weight-fill" style="width:${(weight * 100).toFixed(0)}%;background:${weightColor}"></div>
+          </div>
+          <span class="weight-val" style="color:${weightColor}">${(weight * 100).toFixed(0)}%</span>
+        </div>
+
+        <div class="contrib">${contribLabel}</div>
+      </div>`;
+  }).join('');
+}
+
+function render({ signals, signalHistory }) {
+  const stats = buildStats(signalHistory || []);
+  renderConsensusMain(signals, stats);
+  renderBreakdown(signals, stats);
+}
+
+// ── Boot ──
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('btnBack').addEventListener('click', () => window.close());
+  document.getElementById('btnStats').addEventListener('click', () =>
+    chrome.tabs.create({ url: chrome.runtime.getURL('stats.html') }));
+
+  chrome.storage.local.get(['signals', 'signalHistory'], (data) => {
+    document.getElementById('loadingOverlay').style.display = 'none';
+    document.getElementById('page').style.display = 'block';
+    render(data);
+  });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && (changes.signals || changes.signalHistory)) {
+      chrome.storage.local.get(['signals', 'signalHistory'], render);
+    }
+  });
+});
+</script>
+</body>
+</html>

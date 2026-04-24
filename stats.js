@@ -83,6 +83,19 @@ function fmtDuration(entry) {
   return `~${mins} dk`;
 }
 
+/** Infer interval label from intervalMs for backwards-compatible display. */
+function inferInterval(entry) {
+  if (entry.interval) return entry.interval;
+  if (!entry.intervalMs) return '–';
+  const ms = entry.intervalMs;
+  if (ms <=    60000) return '1m';
+  if (ms <=   300000) return '5m';
+  if (ms <=   900000) return '15m';
+  if (ms <=  1800000) return '30m';
+  if (ms <=  3600000) return '1h';
+  return '1d';
+}
+
 /** Compute P&L for a single history entry.
  *  BUY  → profit when outcomePrice > price
  *  SELL → profit when outcomePrice < price
@@ -280,7 +293,7 @@ function renderTable() {
   const slice = filtered.slice(start, start + PAGE_SIZE);
 
   if (slice.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:30px;color:#8b949e">
+    tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:#8b949e">
       ${filtered.length === 0 ? '⚠️ Bu filtreyle eşleşen sinyal bulunamadı.' : ''}
     </td></tr>`;
     return;
@@ -305,11 +318,12 @@ function renderTable() {
 
     const strBarColor = entry.strength > 70 ? '#3fb950' : entry.strength > 40 ? '#ff9800' : '#58a6ff';
     const icon = SIGNAL_DEFS.find(d => d.id === entry.indicatorId)?.icon || '📊';
-    const tfLabel = entry.interval || '–';
+    const tfLabel = inferInterval(entry);
     const durLabel = fmtDuration(entry);
     const deadlineHtml = fmtDeadline(entry);
+    const idx = filtered.indexOf(entry); // for modal reference
 
-    return `<tr class="${rowCls}">
+    return `<tr class="${rowCls}" data-idx="${allEntries.indexOf(entry)}" style="cursor:pointer">
       <td><span class="outcome-chip ${outcomeCls}">${outcomeIcon}</span></td>
       <td style="color:#8b949e">${fmtDate(entry.time)}</td>
       <td>
@@ -326,6 +340,9 @@ function renderTable() {
       <td>
         <span class="str-bar" style="width:${entry.strength}px;max-width:50px;background:${strBarColor}"></span>
         ${entry.strength}%
+      </td>
+      <td>
+        <span class="info-btn" data-idx="${allEntries.indexOf(entry)}" title="Ayrıntıları göster">ℹ</span>
       </td>
     </tr>`;
   }).join('');
@@ -372,6 +389,143 @@ function renderPagination() {
       window.scrollTo({ top: document.getElementById('signalTableBody').getBoundingClientRect().top + window.scrollY - 80, behavior: 'smooth' });
     });
   });
+}
+
+// ─── Detail Modal ─────────────────────────────────────────────────────────────
+
+function buildPriceLine(entry) {
+  // Build a mini SVG number-line showing entry → exit price
+  if (entry.outcomePrice == null) return '<div style="color:#8b949e;font-size:11px">Sonuç bekleniyor…</div>';
+
+  const entryP  = entry.price;
+  const exitP   = entry.outcomePrice;
+  const minP    = Math.min(entryP, exitP);
+  const maxP    = Math.max(entryP, exitP);
+  const range   = maxP - minP || 1;
+  const isBuy   = entry.type === 'BUY';
+  const isWin   = entry.outcome === 'win';
+  const color   = isWin ? '#3fb950' : '#f85149';
+  const W = 320, H = 54, pad = 40;
+
+  const xEntry = pad + (entryP - minP) / range * (W - 2 * pad);
+  const xExit  = pad + (exitP  - minP) / range * (W - 2 * pad);
+  const yLine  = H / 2;
+
+  // Axis labels might overlap if prices are very close: nudge them apart
+  const entryLabel  = `$${entryP.toFixed(1)}`;
+  const exitLabel   = `$${exitP.toFixed(1)}`;
+  const labelOffset = Math.abs(xEntry - xExit) < 60 ? 16 : 0;
+  const entryLY     = yLine + (xEntry < xExit ? -labelOffset : labelOffset) + 20;
+  const exitLY      = yLine + (xEntry < xExit ? labelOffset : -labelOffset) + 20;
+
+  return `
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
+         style="overflow:visible;display:block;margin:0 auto">
+      <!-- axis line -->
+      <line x1="${pad - 10}" y1="${yLine}" x2="${W - pad + 10}" y2="${yLine}"
+            stroke="#30363d" stroke-width="1.5"/>
+
+      <!-- segment between entry and exit -->
+      <line x1="${xEntry}" y1="${yLine}" x2="${xExit}" y2="${yLine}"
+            stroke="${color}" stroke-width="3" stroke-linecap="round"/>
+
+      <!-- entry dot -->
+      <circle cx="${xEntry}" cy="${yLine}" r="5" fill="#58a6ff" stroke="#0d1117" stroke-width="1.5"/>
+      <!-- exit dot -->
+      <circle cx="${xExit}"  cy="${yLine}" r="5" fill="${color}"   stroke="#0d1117" stroke-width="1.5"/>
+
+      <!-- entry label -->
+      <text x="${xEntry}" y="${yLine - 10}" fill="#58a6ff" font-size="10"
+            text-anchor="middle" font-family="Segoe UI,sans-serif">${entryLabel}</text>
+      <text x="${xEntry}" y="${yLine + 18}" fill="#8b949e" font-size="9"
+            text-anchor="middle" font-family="Segoe UI,sans-serif">Giriş</text>
+
+      <!-- exit label -->
+      <text x="${xExit}" y="${yLine - 10}" fill="${color}" font-size="10"
+            text-anchor="middle" font-family="Segoe UI,sans-serif">${exitLabel}</text>
+      <text x="${xExit}" y="${yLine + 18}" fill="#8b949e" font-size="9"
+            text-anchor="middle" font-family="Segoe UI,sans-serif">Çıkış</text>
+    </svg>`;
+}
+
+function openDetailModal(entry) {
+  const icon     = SIGNAL_DEFS.find(d => d.id === entry.indicatorId)?.icon || '📊';
+  const typeCls  = entry.type === 'BUY' ? 'tb-buy' : 'tb-sell';
+  const pnlColor = entry.pnlAbs == null ? '#8b949e' :
+                   entry.pnlAbs > 0 ? '#3fb950' : entry.pnlAbs < 0 ? '#f85149' : '#8b949e';
+  const outcomeIcon = entry.outcome === 'win' ? '✓ Kazandı' :
+                      entry.outcome === 'loss' ? '✗ Kaybetti' : '⏳ Bekliyor';
+  const outcomeCls  = entry.outcome === 'win' ? 'oc-win' :
+                      entry.outcome === 'loss' ? 'oc-loss' : 'oc-pending';
+  const tfLabel  = inferInterval(entry);
+  const durLabel = fmtDuration(entry);
+  const strColor = entry.strength > 70 ? '#3fb950' : entry.strength > 40 ? '#ff9800' : '#58a6ff';
+
+  document.getElementById('modalBody').innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <span style="font-size:28px">${icon}</span>
+      <div>
+        <div style="font-size:17px;font-weight:700">${entry.indicatorName || entry.indicatorId}</div>
+        <div style="margin-top:4px;display:flex;gap:6px;align-items:center">
+          <span class="type-badge ${typeCls}">${entry.type}</span>
+          <span class="tf-badge">${tfLabel}</span>
+          <span style="font-size:11px;color:#8b949e">${durLabel}</span>
+        </div>
+      </div>
+      <div style="margin-left:auto;text-align:right">
+        <span class="outcome-chip ${outcomeCls}" style="width:auto;padding:4px 10px;border-radius:14px;font-size:12px">${outcomeIcon}</span>
+      </div>
+    </div>
+
+    <div style="font-size:11px;color:#8b949e;margin-bottom:12px">${fmtDate(entry.time)}</div>
+
+    ${entry.message ? `<div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px 12px;font-size:12px;color:#c9d1d9;line-height:1.6;margin-bottom:16px">${entry.message}</div>` : ''}
+
+    <!-- Price number-line -->
+    <div style="background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:14px 10px 8px;margin-bottom:16px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e;margin-bottom:10px;text-align:center">Fiyat Hareketi</div>
+      ${buildPriceLine(entry)}
+    </div>
+
+    <!-- Stats grid -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
+      <div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;text-transform:uppercase;color:#8b949e;margin-bottom:4px">Giriş Fiyatı</div>
+        <div style="font-size:14px;font-weight:700;color:#58a6ff">$${entry.price.toFixed(2)}</div>
+      </div>
+      <div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;text-transform:uppercase;color:#8b949e;margin-bottom:4px">Çıkış Fiyatı</div>
+        <div style="font-size:14px;font-weight:700;color:${pnlColor}">
+          ${entry.outcomePrice != null ? '$' + entry.outcomePrice.toFixed(2) : '–'}
+        </div>
+      </div>
+      <div style="background:#161b22;border:1px solid #21262d;border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:9px;text-transform:uppercase;color:#8b949e;margin-bottom:4px">P&L</div>
+        <div style="font-size:14px;font-weight:700;color:${pnlColor}">
+          ${entry.pnlAbs != null ? (entry.pnlAbs >= 0 ? '+' : '') + '$' + entry.pnlAbs.toFixed(2) : '–'}
+          ${entry.pnlPct != null ? `<span style="font-size:11px">(${pct(entry.pnlPct)})</span>` : ''}
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:10px;text-transform:uppercase;color:#8b949e">Sinyal Gücü</span>
+      <div style="flex:1;height:6px;background:#21262d;border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${entry.strength}%;background:${strColor};border-radius:3px"></div>
+      </div>
+      <span style="font-size:12px;font-weight:600;color:${strColor}">${entry.strength}%</span>
+    </div>
+
+    ${entry.outcomeDeadline ? `
+    <div style="margin-top:10px;font-size:11px;color:#8b949e">
+      Değerlendirme zamanı: ${fmtDate(entry.outcomeDeadline)}
+    </div>` : ''}`;
+
+  document.getElementById('detailModal').style.display = 'flex';
+}
+
+function closeDetailModal() {
+  document.getElementById('detailModal').style.display = 'none';
 }
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
@@ -431,6 +585,68 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // Row click → detail modal; (i) button is handled inside
+  document.getElementById('signalTableBody').addEventListener('click', (e) => {
+    // (i) button click
+    const infoBtnEl = e.target.closest('.info-btn');
+    const rowEl     = e.target.closest('tr[data-idx]');
+
+    if (infoBtnEl || rowEl) {
+      e.stopPropagation();
+      const idx = parseInt((infoBtnEl || rowEl).dataset.idx, 10);
+      if (!isNaN(idx) && allEntries[idx]) openDetailModal(allEntries[idx]);
+    }
+  });
+
+  // Ghost tooltip on (i) button hover
+  const ghost = document.getElementById('ghostTooltip');
+  document.getElementById('signalTableBody').addEventListener('mouseover', (e) => {
+    const btn = e.target.closest('.info-btn');
+    if (!btn) return;
+    const idx   = parseInt(btn.dataset.idx, 10);
+    const entry = allEntries[idx];
+    if (!entry) return;
+
+    const icon = SIGNAL_DEFS.find(d => d.id === entry.indicatorId)?.icon || '📊';
+    const tfLabel = inferInterval(entry);
+    const typeCls = entry.type === 'BUY' ? 'tb-buy' : 'tb-sell';
+    const pnlColor = entry.pnlAbs == null ? '' : entry.pnlAbs > 0 ? 'pnl-pos' : entry.pnlAbs < 0 ? 'pnl-neg' : 'pnl-neu';
+
+    ghost.innerHTML = `
+      <div style="font-weight:700;margin-bottom:6px">${icon} ${entry.indicatorName || entry.indicatorId}</div>
+      <div style="margin-bottom:4px">
+        <span class="type-badge ${typeCls}">${entry.type}</span>
+        <span class="tf-badge" style="margin-left:6px">${tfLabel}</span>
+      </div>
+      <div style="font-size:11px;color:#8b949e;margin-bottom:6px">${fmtDate(entry.time)}</div>
+      <div style="font-size:11px;line-height:1.5;margin-bottom:6px;color:#c9d1d9">${entry.message || '–'}</div>
+      <div style="display:flex;gap:16px;font-size:11px">
+        <div><span style="color:#8b949e">Giriş:</span> ${fmt(entry.price)}</div>
+        ${entry.outcomePrice != null ? `<div><span style="color:#8b949e">Çıkış:</span> ${fmt(entry.outcomePrice)}</div>` : ''}
+        ${entry.pnlAbs != null ? `<div class="${pnlColor}">${entry.pnlAbs >= 0 ? '+' : ''}$${entry.pnlAbs.toFixed(2)}</div>` : ''}
+      </div>`;
+
+    const rect = btn.getBoundingClientRect();
+    ghost.style.display = 'block';
+    // Position: try to the left of the button
+    const gtW = 280;
+    let left = rect.left - gtW - 8;
+    if (left < 8) left = rect.right + 8;
+    ghost.style.left = left + 'px';
+    ghost.style.top  = (rect.top + window.scrollY - 10) + 'px';
+  });
+
+  document.getElementById('signalTableBody').addEventListener('mouseout', (e) => {
+    if (!e.target.closest('.info-btn')) return;
+    ghost.style.display = 'none';
+  });
+
+  // Close modal
+  document.getElementById('detailModal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('detailModal')) closeDetailModal();
+  });
+  document.getElementById('modalClose').addEventListener('click', closeDetailModal);
+
   // Load data
   chrome.storage.local.get(['signalHistory'], ({ signalHistory = [] }) => {
     allEntries = enrich(signalHistory);
@@ -446,7 +662,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>`;
       document.getElementById('indicatorGrid').innerHTML = '';
       document.getElementById('signalTableBody').innerHTML = `
-        <tr><td colspan="11" style="text-align:center;padding:30px;color:#8b949e">
+        <tr><td colspan="12" style="text-align:center;padding:30px;color:#8b949e">
           Sinyal geçmişi boş.
         </td></tr>`;
       return;
