@@ -575,6 +575,20 @@ function drawSignalMarker(ctx, idx, candle, signal, xForIndex, yScale, barW) {
  * Draws ✓ (win) or ✗ (loss) markers for each resolved historical signal.
  * Pending signals are skipped – they show no marker until evaluated.
  */
+
+/** Returns the candle array index for a given timestamp.
+ *  Uses the pre-built time→index map for O(1) lookup and falls back to a
+ *  linear scan when the exact timestamp is absent.
+ */
+function findCandleIndex(time, candles, timeToIdx) {
+  let idx = timeToIdx.get(time);
+  if (idx !== undefined) return idx;
+  for (let i = 0; i < candles.length; i++) {
+    if (candles[i].time >= time) return i;
+  }
+  return -1;
+}
+
 function drawHistoricalSignals(ctx, signalHistory, candles, xForIndex, yScale) {
   if (!signalHistory || signalHistory.length === 0) return;
 
@@ -587,15 +601,7 @@ function drawHistoricalSignals(ctx, signalHistory, candles, xForIndex, yScale) {
   for (const entry of signalHistory) {
     if (entry.outcome === 'pending') continue;
 
-    // Find the first candle at or after the signal time using the map,
-    // falling back to a linear scan when the exact timestamp isn't present.
-    let idx = timeToIdx.get(entry.time);
-    if (idx === undefined) {
-      idx = -1;
-      for (let i = 0; i < candles.length; i++) {
-        if (candles[i].time >= entry.time) { idx = i; break; }
-      }
-    }
+    const idx = findCandleIndex(entry.time, candles, timeToIdx);
     if (idx < 0 || idx >= candles.length) continue;
 
     const c     = candles[idx];
@@ -642,18 +648,13 @@ function drawSignalPriceLines(ctx, signalHistory, candles, xForIndex, yScale, ch
     if (entry.outcome === 'pending' || entry.outcomePrice == null) continue;
 
     // Find entry candle
-    let entryIdx = timeToIdx.get(entry.time);
-    if (entryIdx === undefined) {
-      entryIdx = candles.findIndex(c => c.time >= entry.time);
-      if (entryIdx < 0) continue;
-    }
-
-    // Find outcome candle (first candle at or after outcomeDeadline)
+    const entryIdx = findCandleIndex(entry.time, candles, timeToIdx);
+    if (entryIdx < 0 || entryIdx >= candles.length) continue;
     const deadline = entry.outcomeDeadline || (entry.time + OUTCOME_CANDLES * (entry.intervalMs || DEFAULT_CANDLE_MS));
-    let exitIdx = candles.findIndex(c => c.time >= deadline);
-    if (exitIdx < 0) exitIdx = candles.length - 1; // use last candle if not found
-
-    if (entryIdx >= candles.length || exitIdx < 0) continue;
+    const exitIdx  = Math.max(0, (() => {
+      const i = candles.findIndex(c => c.time >= deadline);
+      return i < 0 ? candles.length - 1 : i;
+    })());
 
     const isWin    = entry.outcome === 'win';
     const isBuy    = entry.type   === 'BUY';

@@ -28,8 +28,6 @@ const DEFAULT_SETTINGS = {
   ema_cross  : { notify: false, threshold: 5  },
 };
 
-const INTERVALS = ['1m', '5m', '15m', '30m', '1h', '1d'];
-
 // Icon map for history entries
 const INDICATOR_ICONS = {
   fibonacci: '📐', rsi: '📊', macd: '📈',

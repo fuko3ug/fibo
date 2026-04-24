@@ -25,7 +25,8 @@ const MS = {
   _5m : 5 * 60 * 1000,
   _15m: 15 * 60 * 1000,
   _30m: 30 * 60 * 1000,
-  _1h : 60 * 60 * 1000,
+  _1h :  60 * 60 * 1000,
+  _1d : 24 * 60 * 60 * 1000,
 };
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -102,6 +103,7 @@ function inferInterval(entry) {
   if (ms <= MS._15m) return '15m';
   if (ms <= MS._30m) return '30m';
   if (ms <= MS._1h)  return '1h';
+  if (ms <= MS._1d)  return '1d';
   return '1d';
 }
 
@@ -313,6 +315,9 @@ function renderTable() {
   const bestPnl  = resolvedPnls.length > 0 ? Math.max(...resolvedPnls) : null;
   const worstPnl = resolvedPnls.length > 0 ? Math.min(...resolvedPnls) : null;
 
+  // Pre-build entry → index map to avoid O(n²) indexOf() inside map()
+  const entryToIdx = new Map(allEntries.map((e, i) => [e, i]));
+
   tbody.innerHTML = slice.map(entry => {
     const outcomeIcon = entry.outcome === 'win'  ? '✓' :
                         entry.outcome === 'loss' ? '✗' : '⏳';
@@ -330,9 +335,9 @@ function renderTable() {
     const tfLabel = inferInterval(entry);
     const durLabel = fmtDuration(entry);
     const deadlineHtml = fmtDeadline(entry);
-    const idx = filtered.indexOf(entry); // for modal reference
+    const eIdx = entryToIdx.get(entry) ?? -1;
 
-    return `<tr class="${rowCls}" data-idx="${allEntries.indexOf(entry)}" style="cursor:pointer">
+    return `<tr class="${rowCls}" data-idx="${eIdx}" style="cursor:pointer">
       <td><span class="outcome-chip ${outcomeCls}">${outcomeIcon}</span></td>
       <td style="color:#8b949e">${fmtDate(entry.time)}</td>
       <td>
@@ -351,7 +356,7 @@ function renderTable() {
         ${entry.strength}%
       </td>
       <td>
-        <span class="info-btn" data-idx="${allEntries.indexOf(entry)}" title="Ayrıntıları göster">ℹ</span>
+        <span class="info-btn" data-idx="${eIdx}" title="Ayrıntıları göster">ℹ</span>
       </td>
     </tr>`;
   }).join('');
