@@ -124,7 +124,7 @@ function renderContent({ price, priceChangePct, fib, signals, signalSettings,
         <div>
           <div class="price-label">Gold (XAU/USD)</div>
           <div class="price-value">${fmt(price)}</div>
-          <div class="price-change ${pctCls}">${pctSign}${pct.toFixed(3)}%</div>
+          <div class="price-change ${pctCls}">${pctSign}${pct.toFixed(2)}%</div>
         </div>
         <div style="text-align:right">
           <span class="session-badge" style="background:${session.bg};color:${session.color};border:1px solid ${session.color}">
@@ -354,7 +354,7 @@ function renderHistorySection(signalHistory) {
         </div>
         <div class="history-right">
           <span class="signal-type-badge ${typeCls}">${entry.type}</span>
-          <div class="history-price">$${entry.price.toFixed(0)}</div>
+          <div class="history-price">${fmt(entry.price)}</div>
           <div class="history-strength">${entry.strength}%</div>
         </div>
       </div>`;

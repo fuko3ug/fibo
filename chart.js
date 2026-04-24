@@ -552,7 +552,7 @@ function drawSignalMarker(ctx, idx, candle, signal, xForIndex, yScale, barW) {
 function drawHistoricalSignals(ctx, signalHistory, candles, xForIndex, yScale) {
   if (!signalHistory || signalHistory.length === 0) return;
 
-  // Build a quick time→index lookup for the candle array
+  // Build a time→index map for O(1) candle lookup
   const timeToIdx = new Map();
   for (let i = 0; i < candles.length; i++) {
     timeToIdx.set(candles[i].time, i);
@@ -561,10 +561,14 @@ function drawHistoricalSignals(ctx, signalHistory, candles, xForIndex, yScale) {
   for (const entry of signalHistory) {
     if (entry.outcome === 'pending') continue;
 
-    // Find the first candle at or after the signal time
-    let idx = -1;
-    for (let i = 0; i < candles.length; i++) {
-      if (candles[i].time >= entry.time) { idx = i; break; }
+    // Find the first candle at or after the signal time using the map,
+    // falling back to a linear scan when the exact timestamp isn't present.
+    let idx = timeToIdx.get(entry.time);
+    if (idx === undefined) {
+      idx = -1;
+      for (let i = 0; i < candles.length; i++) {
+        if (candles[i].time >= entry.time) { idx = i; break; }
+      }
     }
     if (idx < 0 || idx >= candles.length) continue;
 
