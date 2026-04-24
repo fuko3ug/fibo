@@ -446,7 +446,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>`;
       document.getElementById('indicatorGrid').innerHTML = '';
       document.getElementById('signalTableBody').innerHTML = `
-        <tr><td colspan="9" style="text-align:center;padding:30px;color:#8b949e">
+        <tr><td colspan="11" style="text-align:center;padding:30px;color:#8b949e">
           Sinyal geçmişi boş.
         </td></tr>`;
       return;
