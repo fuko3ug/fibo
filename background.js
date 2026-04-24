@@ -514,9 +514,10 @@ async function updateSignalHistory(candles, signals, price) {
     const evalCandle = candles.find(c => c.time >= evalTime);
     if (!evalCandle) continue;
 
+    // Exact breakeven (close === entry price) counts as a win (no loss)
     entry.outcome = entry.type === 'BUY'
-      ? (evalCandle.close > entry.price ? 'win' : 'loss')
-      : (evalCandle.close < entry.price ? 'win' : 'loss');
+      ? (evalCandle.close >= entry.price ? 'win' : 'loss')
+      : (evalCandle.close <= entry.price ? 'win' : 'loss');
     entry.outcomePrice = evalCandle.close;
   }
 
