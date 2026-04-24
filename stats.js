@@ -1,0 +1,405 @@
+/**
+ * stats.js – Statistics page controller
+ *
+ * Reads signalHistory from chrome.storage.local and renders:
+ *  • Summary strip (total signals, win rate, total P&L, best/worst trade)
+ *  • Per-indicator cards with ring charts and mini stats
+ *  • Sortable, filterable, paginated signal history table
+ */
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const SIGNAL_DEFS = [
+  { id: 'fibonacci',  name: 'Fibonacci',        icon: '📐' },
+  { id: 'rsi',        name: 'RSI (14)',          icon: '📊' },
+  { id: 'macd',       name: 'MACD',              icon: '📈' },
+  { id: 'bollinger',  name: 'Bollinger Bands',   icon: '🎯' },
+  { id: 'stochastic', name: 'Stochastic (14)',   icon: '⚡' },
+  { id: 'ema_cross',  name: 'EMA Cross (9/21)',  icon: '✂️' },
+];
+
+const PAGE_SIZE = 20;
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let allEntries  = [];   // enriched history (with pnl fields)
+let filtered    = [];   // after filter + search
+let sortCol     = 'time';
+let sortDir     = -1;   // -1 = desc, 1 = asc
+let filterVal   = 'all';
+let searchVal   = '';
+let currentPage = 1;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function fmt(n)   { return n != null ? '$' + n.toFixed(2) : '–'; }
+function pct(n)   { return n != null ? (n >= 0 ? '+' : '') + n.toFixed(2) + '%' : '–'; }
+
+function fmtDate(ms) {
+  if (!ms) return '–';
+  const d = new Date(ms);
+  return d.toLocaleDateString([], { day: '2-digit', month: 'short', year: '2-digit' })
+    + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** Compute P&L for a single history entry.
+ *  BUY  → profit when outcomePrice > price
+ *  SELL → profit when outcomePrice < price
+ */
+function calcPnl(entry) {
+  if (entry.outcome === 'pending' || entry.outcomePrice == null) return null;
+  const dir = entry.type === 'BUY' ? 1 : -1;
+  const absVal = dir * (entry.outcomePrice - entry.price);
+  const pctVal = (absVal / entry.price) * 100;
+  return { abs: absVal, pct: pctVal };
+}
+
+/** Enrich raw history entries with pnlAbs / pnlPct fields. */
+function enrich(history) {
+  return history.map(e => {
+    const p = calcPnl(e);
+    return { ...e, pnlAbs: p?.abs ?? null, pnlPct: p?.pct ?? null };
+  });
+}
+
+// ─── Summary strip ────────────────────────────────────────────────────────────
+function renderSummary(entries) {
+  const resolved = entries.filter(e => e.outcome !== 'pending');
+  const wins     = entries.filter(e => e.outcome === 'win');
+  const losses   = entries.filter(e => e.outcome === 'loss');
+  const pending  = entries.filter(e => e.outcome === 'pending');
+  const winRate  = resolved.length > 0 ? (wins.length / resolved.length * 100) : null;
+
+  const pnls      = resolved.map(e => e.pnlAbs).filter(v => v != null);
+  const totalPnl  = pnls.reduce((a, b) => a + b, 0);
+  const bestPnl   = pnls.length > 0 ? Math.max(...pnls) : null;
+  const worstPnl  = pnls.length > 0 ? Math.min(...pnls) : null;
+
+  const pnlColor  = totalPnl >= 0 ? '#3fb950' : '#f85149';
+  const wrColor   = winRate == null ? '#8b949e' : winRate >= 60 ? '#3fb950' : winRate >= 45 ? '#ff9800' : '#f85149';
+
+  document.getElementById('summaryStrip').innerHTML = `
+    <div class="summary-card">
+      <div class="summary-value" style="color:#e6edf3">${entries.length}</div>
+      <div class="summary-label">Toplam Sinyal</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-value" style="color:${wrColor}">${winRate != null ? winRate.toFixed(1) + '%' : '–'}</div>
+      <div class="summary-label">Kazanma Oranı</div>
+    </div>
+    <div class="summary-card highlight">
+      <div class="summary-value" style="color:${pnlColor}">${pnls.length > 0 ? (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(2) : '–'}</div>
+      <div class="summary-label">Toplam P&amp;L</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-value" style="color:#3fb950">${bestPnl != null ? '+$' + bestPnl.toFixed(2) : '–'}</div>
+      <div class="summary-label">En İyi İşlem</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-value" style="color:#f85149">${worstPnl != null ? (worstPnl >= 0 ? '+' : '') + '$' + worstPnl.toFixed(2) : '–'}</div>
+      <div class="summary-label">En Kötü İşlem</div>
+    </div>`;
+}
+
+// ─── Per-indicator cards ──────────────────────────────────────────────────────
+function renderIndicatorCards(entries) {
+  const grid = document.getElementById('indicatorGrid');
+
+  grid.innerHTML = SIGNAL_DEFS.map(def => {
+    const group    = entries.filter(e => e.indicatorId === def.id);
+    const resolved = group.filter(e => e.outcome !== 'pending');
+    const wins     = group.filter(e => e.outcome === 'win').length;
+    const losses   = group.filter(e => e.outcome === 'loss').length;
+    const pending  = group.filter(e => e.outcome === 'pending').length;
+    const total    = resolved.length;
+    const winRate  = total > 0 ? (wins / total * 100) : 0;
+
+    const pnls    = resolved.map(e => e.pnlAbs).filter(v => v != null);
+    const totPnl  = pnls.reduce((a, b) => a + b, 0);
+    const avgPnl  = pnls.length > 0 ? totPnl / pnls.length : null;
+    const bestPnl = pnls.length > 0 ? Math.max(...pnls) : null;
+    const pctPnls = resolved.map(e => e.pnlPct).filter(v => v != null);
+    const avgPct  = pctPnls.length > 0 ? pctPnls.reduce((a, b) => a + b, 0) / pctPnls.length : null;
+
+    const ringColor    = winRate >= 60 ? '#3fb950' : winRate >= 45 ? '#ff9800' : '#f85149';
+    const ringCircumf  = 2 * Math.PI * 27; // r=27
+    const dashOffset   = ringCircumf * (1 - winRate / 100);
+    const winBarWidth  = total > 0 ? (wins / total * 100) : 0;
+
+    const pnlColor = totPnl >= 0 ? '#3fb950' : '#f85149';
+
+    return `
+      <div class="ind-card">
+        <div class="ind-card-header">
+          <span class="ind-icon">${def.icon}</span>
+          <span class="ind-name">${def.name}</span>
+          <span class="ind-total">${group.length} sinyal</span>
+        </div>
+
+        <div class="ring-wrap">
+          <div class="ring">
+            <svg viewBox="0 0 60 60" width="70" height="70">
+              <circle class="ring-track" cx="30" cy="30" r="27"/>
+              <circle class="ring-fill" cx="30" cy="30" r="27"
+                stroke="${ringColor}"
+                stroke-dasharray="${ringCircumf.toFixed(1)}"
+                stroke-dashoffset="${dashOffset.toFixed(1)}"/>
+            </svg>
+            <div class="ring-label">
+              <span class="ring-pct" style="color:${ringColor}">${winRate.toFixed(0)}%</span>
+              <span class="ring-sub">win rate</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="wl-bar">
+          <div class="wl-win"  style="width:${winBarWidth}%"></div>
+          <div class="wl-loss"></div>
+        </div>
+
+        <div class="ind-stats">
+          <div class="ind-stat">
+            <div class="ind-stat-lbl">Kazanan</div>
+            <div class="ind-stat-val" style="color:#3fb950">${wins}</div>
+          </div>
+          <div class="ind-stat">
+            <div class="ind-stat-lbl">Kaybeden</div>
+            <div class="ind-stat-val" style="color:#f85149">${losses}</div>
+          </div>
+          <div class="ind-stat">
+            <div class="ind-stat-lbl">Bekleyen</div>
+            <div class="ind-stat-val" style="color:#8b949e">${pending}</div>
+          </div>
+          <div class="ind-stat">
+            <div class="ind-stat-lbl">Ort. P&amp;L</div>
+            <div class="ind-stat-val" style="color:${avgPnl == null ? '#8b949e' : avgPnl >= 0 ? '#3fb950' : '#f85149'}">
+              ${avgPnl != null ? (avgPnl >= 0 ? '+' : '') + '$' + avgPnl.toFixed(2) : '–'}
+            </div>
+          </div>
+          <div class="ind-stat">
+            <div class="ind-stat-lbl">Ort. %</div>
+            <div class="ind-stat-val" style="color:${avgPct == null ? '#8b949e' : avgPct >= 0 ? '#3fb950' : '#f85149'}">
+              ${avgPct != null ? pct(avgPct) : '–'}
+            </div>
+          </div>
+          <div class="ind-stat">
+            <div class="ind-stat-lbl">Toplam P&amp;L</div>
+            <div class="ind-stat-val" style="color:${pnlColor}">
+              ${pnls.length > 0 ? (totPnl >= 0 ? '+' : '') + '$' + totPnl.toFixed(2) : '–'}
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ─── Table ────────────────────────────────────────────────────────────────────
+function applyFilters() {
+  let result = allEntries;
+
+  if (filterVal !== 'all') {
+    if (filterVal === 'win' || filterVal === 'loss' || filterVal === 'pending') {
+      result = result.filter(e => e.outcome === filterVal);
+    } else {
+      result = result.filter(e => e.type === filterVal);
+    }
+  }
+
+  if (searchVal) {
+    const q = searchVal.toLowerCase();
+    result = result.filter(e =>
+      (e.indicatorName || '').toLowerCase().includes(q) ||
+      (e.type || '').toLowerCase().includes(q)
+    );
+  }
+
+  // Sort
+  result = [...result].sort((a, b) => {
+    let av = a[sortCol], bv = b[sortCol];
+    if (av == null) av = sortDir < 0 ? -Infinity : Infinity;
+    if (bv == null) bv = sortDir < 0 ? -Infinity : Infinity;
+    if (typeof av === 'string') av = av.toLowerCase();
+    if (typeof bv === 'string') bv = bv.toLowerCase();
+    return av < bv ? -sortDir : av > bv ? sortDir : 0;
+  });
+
+  filtered = result;
+  currentPage = 1;
+  renderTable();
+  renderPagination();
+}
+
+function renderTable() {
+  const tbody = document.getElementById('signalTableBody');
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const slice = filtered.slice(start, start + PAGE_SIZE);
+
+  if (slice.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:30px;color:#8b949e">
+      ${filtered.length === 0 ? '⚠️ Bu filtreyle eşleşen sinyal bulunamadı.' : ''}
+    </td></tr>`;
+    return;
+  }
+
+  // Find best/worst by pnlAbs among the full filtered set for highlighting
+  const resolvedPnls = filtered.filter(e => e.pnlAbs != null).map(e => e.pnlAbs);
+  const bestPnl  = resolvedPnls.length > 0 ? Math.max(...resolvedPnls) : null;
+  const worstPnl = resolvedPnls.length > 0 ? Math.min(...resolvedPnls) : null;
+
+  tbody.innerHTML = slice.map(entry => {
+    const outcomeIcon = entry.outcome === 'win'  ? '✓' :
+                        entry.outcome === 'loss' ? '✗' : '⏳';
+    const outcomeCls  = entry.outcome === 'win'  ? 'oc-win'  :
+                        entry.outcome === 'loss' ? 'oc-loss' : 'oc-pending';
+    const typeCls     = entry.type === 'BUY' ? 'tb-buy' : 'tb-sell';
+    const pnlColor    = entry.pnlAbs == null ? '' :
+                        entry.pnlAbs > 0 ? 'pnl-pos' : entry.pnlAbs < 0 ? 'pnl-neg' : 'pnl-neu';
+    const isBest  = bestPnl  != null && entry.pnlAbs === bestPnl  && bestPnl  > 0;
+    const isWorst = worstPnl != null && entry.pnlAbs === worstPnl && worstPnl < 0;
+    const rowCls  = isBest ? 'is-best' : isWorst ? 'is-worst' : '';
+
+    const strBarColor = entry.strength > 70 ? '#3fb950' : entry.strength > 40 ? '#ff9800' : '#58a6ff';
+
+    const icon = SIGNAL_DEFS.find(d => d.id === entry.indicatorId)?.icon || '📊';
+
+    return `<tr class="${rowCls}">
+      <td><span class="outcome-chip ${outcomeCls}">${outcomeIcon}</span></td>
+      <td style="color:#8b949e">${fmtDate(entry.time)}</td>
+      <td><span style="font-weight:600">${icon} ${entry.indicatorName || entry.indicatorId}</span></td>
+      <td><span class="type-badge ${typeCls}">${entry.type}</span></td>
+      <td>${fmt(entry.price)}</td>
+      <td>${entry.outcomePrice != null ? fmt(entry.outcomePrice) : '<span style="color:#8b949e">bekliyor</span>'}</td>
+      <td class="${pnlColor}">${entry.pnlAbs != null ? (entry.pnlAbs >= 0 ? '+' : '') + '$' + entry.pnlAbs.toFixed(2) : '<span class="pnl-neu">–</span>'}</td>
+      <td class="${pnlColor}">${entry.pnlPct != null ? pct(entry.pnlPct) : '<span class="pnl-neu">–</span>'}</td>
+      <td>
+        <span class="str-bar" style="width:${entry.strength}px;max-width:50px;background:${strBarColor}"></span>
+        ${entry.strength}%
+      </td>
+    </tr>`;
+  }).join('');
+
+  // Update sort arrows
+  document.querySelectorAll('table.signal-table th').forEach(th => {
+    const col = th.dataset.col;
+    th.classList.toggle('sorted', col === sortCol);
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = col === sortCol ? (sortDir < 0 ? '↓' : '↑') : '↕';
+  });
+}
+
+function renderPagination() {
+  const total = Math.ceil(filtered.length / PAGE_SIZE);
+  const pg    = document.getElementById('pagination');
+
+  if (total <= 1) { pg.innerHTML = ''; return; }
+
+  let html = '';
+  if (currentPage > 1) {
+    html += `<button class="pg-btn" data-page="${currentPage - 1}">‹</button>`;
+  }
+
+  // Show up to 7 page buttons
+  const start = Math.max(1, currentPage - 3);
+  const end   = Math.min(total, start + 6);
+  for (let p = start; p <= end; p++) {
+    html += `<button class="pg-btn ${p === currentPage ? 'active' : ''}" data-page="${p}">${p}</button>`;
+  }
+
+  if (currentPage < total) {
+    html += `<button class="pg-btn" data-page="${currentPage + 1}">›</button>`;
+  }
+
+  html += `<span class="pg-info">${filtered.length} sinyal / sayfa ${currentPage}/${total}</span>`;
+  pg.innerHTML = html;
+
+  pg.querySelectorAll('.pg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentPage = parseInt(btn.dataset.page, 10);
+      renderTable();
+      renderPagination();
+      window.scrollTo({ top: document.getElementById('signalTableBody').getBoundingClientRect().top + window.scrollY - 80, behavior: 'smooth' });
+    });
+  });
+}
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+
+  // Navigation
+  document.getElementById('btnBack').addEventListener('click', () => window.close());
+  document.getElementById('btnClear').addEventListener('click', () => {
+    if (!confirm('Tüm sinyal geçmişi silinecek. Emin misiniz?')) return;
+    chrome.storage.local.set({ signalHistory: [] }, () => {
+      allEntries = [];
+      filtered   = [];
+      renderSummary([]);
+      renderIndicatorCards([]);
+      renderTable();
+      renderPagination();
+    });
+  });
+
+  // Filter buttons
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filterVal = btn.dataset.filter;
+      applyFilters();
+    });
+  });
+
+  // Search
+  document.getElementById('searchInput').addEventListener('input', e => {
+    searchVal = e.target.value.trim();
+    applyFilters();
+  });
+
+  // Sort headers
+  document.querySelectorAll('table.signal-table th[data-col]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortCol === col) {
+        sortDir = -sortDir;
+      } else {
+        sortCol = col;
+        sortDir = col === 'time' ? -1 : -1;
+      }
+      applyFilters();
+    });
+  });
+
+  // Load data
+  chrome.storage.local.get(['signalHistory'], ({ signalHistory = [] }) => {
+    allEntries = enrich(signalHistory);
+
+    document.getElementById('loadingOverlay').style.display = 'none';
+    document.getElementById('page').style.display = 'block';
+
+    if (allEntries.length === 0) {
+      document.getElementById('summaryStrip').innerHTML = `
+        <div class="empty-state" style="grid-column:1/-1">
+          <div class="empty-icon">📭</div>
+          <p>Henüz sinyal geçmişi yok.<br>Birkaç sinyal üretildikten sonra burada istatistikleri göreceksiniz.</p>
+        </div>`;
+      document.getElementById('indicatorGrid').innerHTML = '';
+      document.getElementById('signalTableBody').innerHTML = `
+        <tr><td colspan="9" style="text-align:center;padding:30px;color:#8b949e">
+          Sinyal geçmişi boş.
+        </td></tr>`;
+      return;
+    }
+
+    renderSummary(allEntries);
+    renderIndicatorCards(allEntries);
+    applyFilters();
+  });
+
+  // Live updates while page is open
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.signalHistory) {
+      const updated = changes.signalHistory.newValue || [];
+      allEntries = enrich(updated);
+      renderSummary(allEntries);
+      renderIndicatorCards(allEntries);
+      applyFilters();
+    }
+  });
+});

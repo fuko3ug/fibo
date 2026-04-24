@@ -213,7 +213,8 @@ function renderContent({ price, priceChangePct, fib, signals, signalSettings,
   html += `
     <div class="btn-row">
       <button class="btn btn-primary" id="btnChart">📊 Open Chart</button>
-      <button class="btn btn-secondary" id="btnRefresh">⟳ Refresh</button>
+      <button class="btn btn-stats" id="btnStats">📈 Stats</button>
+      <button class="btn btn-secondary" id="btnRefresh">⟳</button>
     </div>`;
 
   content.innerHTML = html;
@@ -256,9 +257,12 @@ function renderContent({ price, priceChangePct, fib, signals, signalSettings,
     });
   });
 
-  // Chart / Refresh buttons
+  // Chart / Refresh / Stats buttons
   document.getElementById('btnChart').addEventListener('click', () => {
     chrome.tabs.create({ url: chrome.runtime.getURL('chart.html') });
+  });
+  document.getElementById('btnStats').addEventListener('click', () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('stats.html') });
   });
   document.getElementById('btnRefresh').addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'FETCH_NOW' });
