@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Fibonacci Gold Signal",
+  "version": "1.0.0",
+  "description": "Real-time gold chart with Fibonacci analysis and reversal signal alerts",
+  "permissions": [
+    "storage",
+    "alarms",
+    "tabs",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://query1.finance.yahoo.com/*",
+    "https://query2.finance.yahoo.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["chart.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
