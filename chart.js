@@ -31,9 +31,10 @@ const PAD = { top: 20, right: 80, bottom: 50, left: 80 };
 const REFRESH_DELAY_MS = 1500;
 
 // ─── State ──────────────────────────────────────────────────────────────────
-let state = { candles: [], fib: null, forecast: [], signal: null, signals: {}, price: null, signalHistory: [] };
+let state = { candles: [], fib: null, forecast: [], signal: null, signals: {}, price: null, signalHistory: [], selectedInterval: '1h' };
 let canvas, ctx;
 let crosshairX = null;
+let crosshairY = null;
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -57,11 +58,13 @@ document.addEventListener('DOMContentLoaded', () => {
   canvas.addEventListener('mousemove', (e) => {
     const rect = canvas.getBoundingClientRect();
     crosshairX = e.clientX - rect.left;
+    crosshairY = e.clientY - rect.top;
     render();
     showTooltip(e);
   });
   canvas.addEventListener('mouseleave', () => {
     crosshairX = null;
+    crosshairY = null;
     render();
     document.getElementById('tooltip').style.display = 'none';
   });
@@ -83,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ─── Data Loading ────────────────────────────────────────────────────────────
 function loadData() {
   chrome.storage.local.get(
-    ['candles', 'fib', 'forecast', 'lastSignal', 'signals', 'price', 'signalHistory'],
+    ['candles', 'fib', 'forecast', 'lastSignal', 'signals', 'price', 'signalHistory', 'selectedInterval'],
     (data) => {
       if (!data.candles || data.candles.length === 0) {
         // Data not ready yet – retry
@@ -91,13 +94,14 @@ function loadData() {
         return;
       }
 
-      state.candles       = data.candles       || [];
-      state.fib           = data.fib           || null;
-      state.forecast      = data.forecast      || [];
-      state.signal        = data.lastSignal    || null;
-      state.signals       = data.signals       || {};
-      state.price         = data.price         || null;
-      state.signalHistory = data.signalHistory || [];
+      state.candles          = data.candles       || [];
+      state.fib              = data.fib           || null;
+      state.forecast         = data.forecast      || [];
+      state.signal           = data.lastSignal    || null;
+      state.signals          = data.signals       || {};
+      state.price            = data.price         || null;
+      state.signalHistory    = data.signalHistory || [];
+      state.selectedInterval = data.selectedInterval || '1h';
 
       document.getElementById('loading').style.display = 'none';
 
@@ -212,16 +216,31 @@ function updateForecastPanel() {
 
   if (!fc || fc.length === 0) { el.textContent = 'Insufficient data'; return; }
 
-  const first = fc[0].price;
-  const last  = fc[fc.length - 1].price;
-  const dir   = last > first ? '▲ Upward' : '▼ Downward';
-  const color = last > first ? '#3fb950' : '#f85149';
+  const first     = fc[0].price;
+  const last      = fc[fc.length - 1].price;
+  const dir       = last > first ? '▲ Upward' : '▼ Downward';
+  const color     = last > first ? '#3fb950' : '#f85149';
+
+  // Format each forecast point with its target price and date
+  const rows = fc.map((pt, i) => {
+    const ts  = new Date(pt.time);
+    const lbl = ts.toLocaleDateString([], { month: 'short', day: 'numeric' })
+              + ' ' + ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const diff = pt.price - (i === 0 ? state.price || first : fc[i - 1].price);
+    const dColor = diff >= 0 ? '#3fb950' : '#f85149';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;
+                        padding:2px 0;border-bottom:1px solid #21262d;font-size:10px">
+      <span style="color:#8b949e;font-size:9px">+${i + 1} bar · ${lbl}</span>
+      <span class="forecast-target" style="color:${dColor}">$${pt.price.toFixed(2)}</span>
+    </div>`;
+  }).join('');
 
   el.innerHTML = `
-    Direction: <span style="color:${color};font-weight:600">${dir}</span><br>
-    Short (1h): <span class="forecast-target">$${first.toFixed(2)}</span><br>
-    Long (${fc.length}h): <span class="forecast-target">$${last.toFixed(2)}</span><br>
-    Change: <span style="color:${color}">${last > first ? '+' : ''}${(last - first).toFixed(2)}</span>`;
+    <div style="margin-bottom:6px">
+      Yön: <span style="color:${color};font-weight:600">${dir}</span>&nbsp;
+      <span style="color:#8b949e;font-size:10px">${(last - first >= 0 ? '+' : '')}${(last - first).toFixed(2)}</span>
+    </div>
+    ${rows}`;
 }
 
 function updateHistoryPanel() {
@@ -344,7 +363,8 @@ function render() {
 
   // Crosshair
   if (crosshairX != null && crosshairX >= chartL && crosshairX <= chartR) {
-    drawCrosshair(ctx, crosshairX, chartT, chartB, allCandles, xForIndex, chartL, chartW, totalBars, yScale);
+    drawCrosshair(ctx, crosshairX, crosshairY, chartT, chartB, chartL, chartR,
+                  allCandles, forecast, xForIndex, chartW, totalBars, yScale, yMin, yMax);
   }
 }
 
@@ -698,22 +718,103 @@ function drawSignalPriceLines(ctx, signalHistory, candles, xForIndex, yScale, ch
   }
 }
 
-function drawCrosshair(ctx, mouseX, cT, cB, candles, xForIndex, cL, chartW, totalBars, yScale) {
-  // Snap to nearest candle index
-  const barW = chartW / totalBars;
-  const idx  = Math.max(0, Math.min(candles.length - 1, Math.floor((mouseX - cL) / barW)));
-  const x    = xForIndex(idx);
+/**
+ * Draws a full crosshair with:
+ * – yellow vertical line snapped to the nearest candle (or forecast) bar
+ * – yellow horizontal line at the exact mouse Y
+ * – price label on the right Y-axis (yellow pill)
+ * – time label on the bottom X-axis (yellow pill)
+ */
+function drawCrosshair(ctx, mouseX, mouseY, cT, cB, cL, cR,
+                       candles, forecast, xForIndex, chartW, totalBars, yScale, yMin, yMax) {
+  const barW  = chartW / totalBars;
+  const idx   = Math.max(0, Math.min(candles.length - 1, Math.floor((mouseX - cL) / barW)));
+  const snapX = xForIndex(idx);
+  const snapY = (mouseY != null && mouseY >= cT && mouseY <= cB) ? mouseY : null;
 
   ctx.save();
-  ctx.strokeStyle = 'rgba(139,148,158,0.5)';
-  ctx.lineWidth   = 1;
-  ctx.setLineDash([3, 3]);
 
+  // ── Vertical line (yellow, snapped to candle) ────────────────────────────
+  ctx.strokeStyle = 'rgba(255,215,0,0.6)';
+  ctx.lineWidth   = 1;
+  ctx.setLineDash([4, 3]);
   ctx.beginPath();
-  ctx.moveTo(x, cT);
-  ctx.lineTo(x, cB);
+  ctx.moveTo(snapX, cT);
+  ctx.lineTo(snapX, cB);
   ctx.stroke();
+
+  // ── Horizontal line (yellow, exact mouse Y) ───────────────────────────────
+  if (snapY != null) {
+    ctx.beginPath();
+    ctx.moveTo(cL, snapY);
+    ctx.lineTo(cR, snapY);
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+
+  // ── Time label on X-axis ─────────────────────────────────────────────────
+  if (idx < candles.length) {
+    const c   = candles[idx];
+    const ts  = new Date(c.time);
+    const lbl = ts.toLocaleDateString([], { month: 'short', day: 'numeric' })
+              + ' ' + ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const lblW = ctx.measureText(lbl).width + 16;
+    const lblH = 18;
+    const lblX = snapX - lblW / 2;
+    const lblY = cB + 4;
+
+    ctx.fillStyle   = '#FFD700';
+    ctx.strokeStyle = '#0d1117';
+    ctx.lineWidth   = 1;
+    roundRect(ctx, lblX, lblY, lblW, lblH, 3);
+    ctx.fill();
+
+    ctx.fillStyle    = '#0d1117';
+    ctx.font         = 'bold 10px Segoe UI, sans-serif';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(lbl, snapX, lblY + lblH / 2);
+  }
+
+  // ── Price label on Y-axis ─────────────────────────────────────────────────
+  if (snapY != null) {
+    const price  = yMin + (1 - (snapY - cT) / (cB - cT)) * (yMax - yMin);
+    const lbl    = '$' + price.toFixed(2);
+    const lblW   = ctx.measureText(lbl).width + 14;
+    const lblH   = 18;
+    const lblX   = cR + 4;
+    const lblY   = snapY - lblH / 2;
+
+    ctx.fillStyle   = '#FFD700';
+    ctx.strokeStyle = '#0d1117';
+    ctx.lineWidth   = 1;
+    roundRect(ctx, lblX, lblY, lblW, lblH, 3);
+    ctx.fill();
+
+    ctx.fillStyle    = '#0d1117';
+    ctx.font         = 'bold 10px Segoe UI, sans-serif';
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(lbl, lblX + 7, snapY);
+  }
+
   ctx.restore();
+}
+
+/** Draws a rounded rectangle path (fill/stroke is up to caller). */
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y,     x + w, y + r,     r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);
+  ctx.arcTo(x,     y + h, x,     y + h - r, r);
+  ctx.lineTo(x,     y + r);
+  ctx.arcTo(x,     y,     x + r, y,         r);
+  ctx.closePath();
 }
 
 // ─── Tooltip on mousemove ─────────────────────────────────────────────────────

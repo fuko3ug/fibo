@@ -79,7 +79,7 @@ function setActiveInterval(iv) {
 
 // ─── Rendering ──────────────────────────────────────────────────────────────
 function renderContent({ price, priceChangePct, fib, signals, signalSettings,
-                         lastUpdate, fetchError, signalHistory }) {
+                         lastUpdate, fetchError, signalHistory, forecast }) {
   if (fetchError && !price) {
     document.getElementById('content').innerHTML = `
       <div class="error-block">
@@ -201,6 +201,35 @@ function renderContent({ price, priceChangePct, fib, signals, signalSettings,
         <div class="fib-row${isKey ? ' key' : ''}">
           <span class="fib-label">${lvl.label}</span>
           <span class="fib-price">${fmt(lvl.price)}</span>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+
+  // ── Forecast / prediction levels ─────────────────────────────────────────
+  if (forecast && forecast.length > 0) {
+    const first = forecast[0].price;
+    const last  = forecast[forecast.length - 1].price;
+    const dir   = last >= first ? '▲' : '▼';
+    const dClr  = last >= first ? '#3fb950' : '#f85149';
+    html += `<div class="section-title" style="margin-top:2px">📡 Tahmin Seviyeleri</div>`;
+    html += `<div style="padding:0 16px 8px">`;
+    html += `<div style="font-size:10px;color:#8b949e;margin-bottom:4px">
+      ${dir} Genel yön: <span style="color:${dClr};font-weight:600">${last >= first ? 'YUKARI' : 'AŞAĞI'}</span>
+      &nbsp;<span style="color:${dClr}">${last >= first ? '+' : ''}${(last - first).toFixed(2)}</span>
+    </div>`;
+    for (let i = 0; i < forecast.length; i++) {
+      const pt   = forecast[i];
+      const ts   = new Date(pt.time);
+      const lbl  = ts.toLocaleDateString([], { month: 'short', day: 'numeric' })
+                 + ' ' + ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const diff = pt.price - (i === 0 ? (price || first) : forecast[i - 1].price);
+      const clr  = diff >= 0 ? '#3fb950' : '#f85149';
+      html += `
+        <div style="display:flex;justify-content:space-between;align-items:center;
+                    padding:3px 0;border-bottom:1px solid #21262d;font-size:11px">
+          <span style="color:#8b949e;font-size:10px">+${i + 1} bar&ensp;${lbl}</span>
+          <span style="color:${clr};font-weight:600">$${pt.price.toFixed(2)}</span>
         </div>`;
     }
     html += `</div>`;
@@ -391,7 +420,7 @@ function saveSignalSetting(id, changes) {
 function loadData() {
   chrome.storage.local.get(
     ['price', 'priceChangePct', 'fib', 'signals', 'signalSettings',
-     'lastUpdate', 'fetchError', 'signalHistory'],
+     'lastUpdate', 'fetchError', 'signalHistory', 'forecast', 'selectedInterval'],
     (data) => {
       if (!data.price && !data.fetchError) {
         document.getElementById('content').innerHTML =
